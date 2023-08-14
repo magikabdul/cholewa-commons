@@ -23,13 +23,6 @@ jobs:
           server-id: github
           cache: maven
 
-      - name: Get latest tag
-        id: get_tag
-        run: TAG=$(git describe --tags --abbrev=0)
-
-      - name: Use the latest tag
-        run: echo "The latest tag is $TAG"
-
       - name: Set output
         id: vars
         run: echo "tag=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
