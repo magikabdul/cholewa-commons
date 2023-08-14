@@ -124,4 +124,12 @@
             </plugin>
         </plugins>
     </build>
+
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>magikabdul</name>
+            <url>https://maven.pkg.github.com/magikabdul/cholewa-commons</url>
+        </repository>
+    </distributionManagement>
 </project>
