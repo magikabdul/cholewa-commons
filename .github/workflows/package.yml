@@ -24,6 +24,6 @@ jobs:
           cache: maven
 
       - name: Publish to Github Packages
-        run: mvn --batch-mode deploy
+        run: mvn --batch-mode deploy -Dversion=0.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
