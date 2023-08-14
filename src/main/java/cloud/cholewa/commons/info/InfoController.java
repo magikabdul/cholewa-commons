@@ -13,6 +13,11 @@ public record InfoController(Info info) {
             @Value("${spring.application.version.service}") final String serviceVersion,
             @Value("spring.application.name") final String name,
             final GitProperties gitProperties) {
+        this(new Info(
+                serviceVersion,
+                new Version(name),
+                gitProperties.getCommitId()
+        ));
     }
 
     @GetMapping(value = "/info", produces = MediaType.APPLICATION_JSON_VALUE)
