@@ -16,6 +16,14 @@
     <name>cholewa-commons</name>
     <description>cholewa-commons</description>
 
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>magikabdul</name>
+            <url>https://maven.pkg.github.com/magikabdul/cholewa-commons</url>
+        </repository>
+    </distributionManagement>
+
     <properties>
         <java.version>17</java.version>
 
@@ -124,12 +132,4 @@
             </plugin>
         </plugins>
     </build>
-
-    <distributionManagement>
-        <repository>
-            <id>github</id>
-            <name>magikabdul</name>
-            <url>https://maven.pkg.github.com/magikabdul/cholewa-commons</url>
-        </repository>
-    </distributionManagement>
 </project>
