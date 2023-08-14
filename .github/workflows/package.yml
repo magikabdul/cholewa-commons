@@ -23,9 +23,16 @@ jobs:
           server-id: github
           cache: maven
 
+      - name: Get latest tag
+        id: get_tag
+        run: echo "::set-output name=TAG::$(git describe --tags --abbrev=0)"
+
+      - name: Use the latest tag
+        run: echo "The latest tag is ${{ steps.get_tag.outputs.TAG }}"
+
       - name: Publish to Github Packages
         run: |
-          mvn versions:set -DnewVersion=0.0.2
+          mvn versions:set -DnewVersion=${{ steps.get_tag.outputs.TAG }}
           mvn --batch-mode deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
