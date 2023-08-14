@@ -2,16 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [feature/**]
+    branches: []
   pull_request:
-    branches: [develop]
+    branches: [ main ]
+    types: [ opened ]
   workflow_dispatch:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
 
@@ -24,3 +23,18 @@ jobs:
 
       - name: Build with Maven
         run: mvn -B package --file pom.xml
+
+      - name: Discord notification -> success
+        uses: sarisia/actions-status-discord@v1
+        if: ${{ success() }}
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: ${{ job.status }}
+          title: "CI - success"
+      - name: Discord notification -> non success
+        uses: sarisia/actions-status-discord@v1
+        if: ${{ !success() }}
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: ${{ job.status }}
+          title: "CI - failure"
