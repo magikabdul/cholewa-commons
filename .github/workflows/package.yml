@@ -25,14 +25,14 @@ jobs:
 
       - name: Get latest tag
         id: get_tag
-        run: echo "::set-output name=TAG::$(git describe --tags --abbrev=0)"
+        run: echo "TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
 
       - name: Use the latest tag
-        run: echo "The latest tag is ${{ steps.get_tag.outputs.TAG }}"
+        run: echo "The latest tag is ${{ TAG }}"
 
-      - name: Publish to Github Packages
-        run: |
-          mvn versions:set -DnewVersion=${{ steps.get_tag.outputs.TAG }}
-          mvn --batch-mode deploy
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#      - name: Publish to Github Packages
+#        run: |
+#          mvn versions:set -DnewVersion=${{ steps.get_tag.outputs.TAG }}
+#          mvn --batch-mode deploy
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
