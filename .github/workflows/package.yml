@@ -24,6 +24,8 @@ jobs:
           cache: maven
 
       - name: Publish to Github Packages
-        run: mvn --batch-mode deploy -Dartifact.version=0.0.2
+        run: |
+          mvn versions:set -DnewVersion=0.0.2
+          mvn --batch-mode deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
