@@ -28,7 +28,7 @@ jobs:
         run: echo "TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
 
       - name: Use the latest tag
-        run: echo "The latest tag is ${{ TAG }}"
+        run: echo "The latest tag is $TAG"
 
 #      - name: Publish to Github Packages
 #        run: |
