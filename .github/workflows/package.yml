@@ -22,10 +22,6 @@ jobs:
         run: |
           echo "GIT_TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_OUTPUT
 
-      - name: Use the latest tag
-        run: |
-          echo "The latest tag is [${{ steps.version.outputs.GIT_TAG }}]"
-
       - name: Set up JDK 17
         uses: actions/setup-java@v3
         with:
@@ -34,11 +30,9 @@ jobs:
           server-id: github
           cache: maven
 
-
-
-#      - name: Publish to Github Packages
-#        run: |
-#          mvn versions:set -DnewVersion=${{ steps.get_tag.outputs.TAG }}
-#          mvn --batch-mode deploy
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to Github Packages
+        run: |
+          mvn versions:set -DnewVersion=${{ steps.version.outputs.GIT_TAG }}
+          mvn --batch-mode deploy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
