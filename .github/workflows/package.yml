@@ -24,14 +24,13 @@ jobs:
           cache: maven
 
       - name: Get tag
-        id: get_tag
+        id: version
         run: |
-          GIT_TAG=$(git describe --tags --abbrev=0)
-          echo "Tag is: [$GIT_TAG]"
-          echo "GIT_TAG=$GIT_TAG" >> $GITHUB_OUTPUT
+          echo "GIT_TAG=$(git describe --tags --abbrev=0) >> $GITHUB_OUTPUT
 
       - name: Use the latest tag
-        run: echo "The latest tag is [${{ steps.git_tag.outputs.GIT_TAG }}]"
+        run: |
+          echo "The latest tag is [${{ steps.version.outputs.GIT_TAG }}]"
 
 #      - name: Publish to Github Packages
 #        run: |
