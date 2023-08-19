@@ -1,8 +1,7 @@
 package cloud.cholewa.commons.info;
 
 public record Info(
-        String name,
-        Version version,
+        Application application,
         String commitId
 ) {
 }
