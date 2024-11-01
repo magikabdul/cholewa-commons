@@ -21,7 +21,7 @@ public class WebExchangeBindExceptionProcessor implements ExceptionProcessor {
             .httpStatus(HttpStatus.BAD_REQUEST)
             .errors(exception.getAllErrors().stream()
                 .map(objectError -> ErrorMessage.builder()
-                    .message("Missing parameter")
+                    .message("Missing or invalid parameter")
                     .details(Optional.ofNullable(objectError.getArguments())
                         .map(args -> (DefaultMessageSourceResolvable) args[0] )
                         .map(DefaultMessageSourceResolvable::getDefaultMessage)

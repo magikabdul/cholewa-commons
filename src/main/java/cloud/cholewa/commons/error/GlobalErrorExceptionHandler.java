@@ -6,6 +6,7 @@ import cloud.cholewa.commons.error.processor.ConstraintViolationExceptionProcess
 import cloud.cholewa.commons.error.processor.DefaultExceptionProcessor;
 import cloud.cholewa.commons.error.processor.DuplicateKeyExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ExceptionProcessor;
+import cloud.cholewa.commons.error.processor.NoSuchElementProcessor;
 import cloud.cholewa.commons.error.processor.NotImplementedExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ServerWebInputExceptionProcessor;
 import cloud.cholewa.commons.error.processor.WebClientResponseExceptionProcessor;
@@ -31,6 +32,7 @@ import org.yaml.snakeyaml.constructor.DuplicateKeyException;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -56,7 +58,8 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
             Map.entry(NotImplementedException.class, new NotImplementedExceptionProcessor()),
             Map.entry(ServerWebInputException.class, new ServerWebInputExceptionProcessor()),
             Map.entry(WebClientResponseException.class, new WebClientResponseExceptionProcessor()),
-            Map.entry(WebExchangeBindException.class, new WebExchangeBindExceptionProcessor())
+            Map.entry(WebExchangeBindException.class, new WebExchangeBindExceptionProcessor()),
+            Map.entry(NoSuchElementException.class, new NoSuchElementProcessor())
         );
     }
 
@@ -93,6 +96,6 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
 
     @Override
     protected void logError(final ServerRequest request, final ServerResponse response, final Throwable throwable) {
-        log.error("Received {} error", throwable.getClass().getName());
+        log.error("Received {} error", throwable.getLocalizedMessage());
     }
 }
