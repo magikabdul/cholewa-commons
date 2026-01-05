@@ -35,9 +35,7 @@ jobs:
           restore-keys: ${{ runner.os }}-m2
 
       - name: Build and test with JaCoCo
-        run: mvn clean test \
-          org.jacoco:jacoco-maven-plugin:0.8.12:prepare-agent \
-          org.jacoco:jacoco-maven-plugin:0.8.12:report
+        run: mvn clean test org.jacoco:jacoco-maven-plugin:0.8.12:prepare-agent org.jacoco:jacoco-maven-plugin:0.8.12:report
 
       - name: Build and analyze
         env:
