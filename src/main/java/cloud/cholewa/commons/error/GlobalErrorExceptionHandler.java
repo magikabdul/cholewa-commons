@@ -13,9 +13,11 @@ import cloud.cholewa.commons.error.processor.WebClientResponseExceptionProcessor
 import cloud.cholewa.commons.error.processor.WebExchangeBindExceptionProcessor;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.NullMarked;
 import org.springframework.boot.autoconfigure.web.WebProperties;
-import org.springframework.boot.autoconfigure.web.reactive.error.AbstractErrorWebExceptionHandler;
-import org.springframework.boot.web.reactive.error.ErrorAttributes;
+import org.springframework.boot.webflux.autoconfigure.error.AbstractErrorWebExceptionHandler;
+import org.springframework.boot.webflux.error.ErrorAttributes;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.codec.ServerCodecConfigurer;
@@ -33,6 +35,7 @@ import reactor.core.publisher.Mono;
 
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -74,8 +77,8 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
     }
 
     @Override
+    @NullMarked
     protected RouterFunction<ServerResponse> getRoutingFunction(final ErrorAttributes errorAttributes) {
-
         return RouterFunctions.route(
             RequestPredicates.all(), this::renderErrorResponse
         );
@@ -84,10 +87,8 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
     Mono<ServerResponse> renderErrorResponse(final ServerRequest request) {
         Throwable throwable = getError(request);
 
-        Errors errors = processors.getOrDefault(
-            throwable.getClass(),
-            defaultExceptionProcessor
-        ).apply(getError(request));
+        Errors errors = processors.getOrDefault(Objects.requireNonNull(throwable).getClass(), defaultExceptionProcessor)
+            .apply(getError(request));
 
         return ServerResponse
             .status(errors.getHttpStatus())
@@ -95,7 +96,11 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
     }
 
     @Override
-    protected void logError(final ServerRequest request, final ServerResponse response, final Throwable throwable) {
+    protected void logError(
+        final @NonNull ServerRequest request,
+        final @NonNull ServerResponse response,
+        final @NonNull Throwable throwable
+    ) {
         log.error("Received {} error", throwable.getLocalizedMessage());
     }
 }
