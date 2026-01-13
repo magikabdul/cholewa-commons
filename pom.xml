@@ -119,6 +119,9 @@
 				<groupId>org.codehaus.mojo</groupId>
 				<artifactId>versions-maven-plugin</artifactId>
 				<version>${versions-maven-plugin.version}</version>
+				<configuration>
+					<ignoredVersions>(?i).*(beta|milestone|rc|alpha|snapshot|preview|m\d+|b\d+).*</ignoredVersions>
+				</configuration>
 				<executions>
 					<execution>
 						<goals>

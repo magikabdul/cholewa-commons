@@ -95,12 +95,17 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
             .body(BodyInserters.fromValue(errors));
     }
 
+    /*
+     * Method overrode to not have a log for the parent method.
+     * Only logging from the default processor is required
+     */
     @Override
+    @SuppressWarnings("java:S125")
     protected void logError(
         final @NonNull ServerRequest request,
         final @NonNull ServerResponse response,
         final @NonNull Throwable throwable
     ) {
-        log.error("Received {} error", throwable.getLocalizedMessage());
+        //log.error("Received {} error", throwable.getLocalizedMessage());
     }
 }
