@@ -8,6 +8,7 @@ import cloud.cholewa.commons.error.processor.DuplicateKeyExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ExceptionProcessor;
 import cloud.cholewa.commons.error.processor.NoSuchElementProcessor;
 import cloud.cholewa.commons.error.processor.NotImplementedExceptionProcessor;
+import cloud.cholewa.commons.error.processor.ResponseStatusExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ServerWebInputExceptionProcessor;
 import cloud.cholewa.commons.error.processor.WebClientResponseExceptionProcessor;
 import cloud.cholewa.commons.error.processor.WebExchangeBindExceptionProcessor;
@@ -29,6 +30,7 @@ import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.RouterFunctions;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebInputException;
 import org.yaml.snakeyaml.constructor.DuplicateKeyException;
 import reactor.core.publisher.Mono;
@@ -59,6 +61,7 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
             Map.entry(ConstraintViolationException.class, new ConstraintViolationExceptionProcessor()),
             Map.entry(DuplicateKeyException.class, new DuplicateKeyExceptionProcessor()),
             Map.entry(NotImplementedException.class, new NotImplementedExceptionProcessor()),
+            Map.entry(ResponseStatusException.class, new ResponseStatusExceptionProcessor()),
             Map.entry(ServerWebInputException.class, new ServerWebInputExceptionProcessor()),
             Map.entry(WebClientResponseException.class, new WebClientResponseExceptionProcessor()),
             Map.entry(WebExchangeBindException.class, new WebExchangeBindExceptionProcessor()),
@@ -71,7 +74,7 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
     ) {
         this.processors = Stream.of(this.processors, processors)
             .flatMap(map -> map.entrySet().stream())
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (builtIn, custom) -> custom));
 
         return this;
     }
@@ -85,14 +88,27 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
     }
 
     Mono<ServerResponse> renderErrorResponse(final ServerRequest request) {
-        Throwable throwable = getError(request);
+        Throwable throwable = Objects.requireNonNull(getError(request));
 
-        Errors errors = processors.getOrDefault(Objects.requireNonNull(throwable).getClass(), defaultExceptionProcessor)
-            .apply(getError(request));
+        Errors errors = resolveProcessor(throwable).apply(throwable);
 
         return ServerResponse
             .status(errors.getHttpStatus())
             .body(BodyInserters.fromValue(errors));
+    }
+
+    ExceptionProcessor resolveProcessor(final Throwable throwable) {
+        ExceptionProcessor exactMatch = processors.get(throwable.getClass());
+
+        if (exactMatch != null) {
+            return exactMatch;
+        }
+
+        return processors.keySet().stream()
+            .filter(type -> type.isInstance(throwable))
+            .reduce((first, second) -> first.isAssignableFrom(second) ? second : first)
+            .map(processors::get)
+            .orElse(defaultExceptionProcessor);
     }
 
     /*

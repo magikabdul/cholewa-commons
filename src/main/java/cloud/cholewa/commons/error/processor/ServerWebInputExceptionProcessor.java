@@ -8,67 +8,57 @@ import org.springframework.web.server.ServerWebInputException;
 
 import java.util.Collections;
 import java.util.Optional;
-import java.util.Set;
 
 public class ServerWebInputExceptionProcessor implements ExceptionProcessor {
 
+    private static final int MAX_CAUSE_DEPTH = 16;
+
     @Override
     public Errors apply(final Throwable throwable) {
-        final Throwable cause = ((ServerWebInputException) throwable).getMostSpecificCause();
+        final ServerWebInputException exception = (ServerWebInputException) throwable;
 
-        ErrorMessage errorMessage = ErrorMessage.builder()
-            .message("Unknown type of ServerWebInputException")
+        return Errors.builder()
+            .httpStatus(HttpStatus.BAD_REQUEST)
+            .errors(Collections.singleton(buildErrorMessage(exception)))
             .build();
+    }
 
-        if (cause instanceof ServerWebInputException serverWebInputException) {
-            return Errors.builder()
-                .httpStatus(HttpStatus.BAD_REQUEST)
-                .errors(Collections.singleton(
-                    handleServerWebInputException(serverWebInputException, errorMessage)
-                ))
-                .build();
-        } else if (cause instanceof DecodingException) {
-            return Errors.builder()
-                .httpStatus(HttpStatus.BAD_REQUEST)
-                .errors(handleDecodingException(cause, errorMessage))
-                .build();
-        } else {
-            return Errors.builder()
-                .httpStatus(HttpStatus.BAD_REQUEST)
-                .errors(handleUnknownTypeOfServerWebInputException(cause, errorMessage))
+    private ErrorMessage buildErrorMessage(final ServerWebInputException exception) {
+        return findDecodingCause(exception)
+            .map(this::decodingErrorMessage)
+            .orElseGet(() -> inputErrorMessage(exception));
+    }
+
+    private ErrorMessage decodingErrorMessage(final DecodingException decodingException) {
+        if (decodingException.getCause() == null) {
+            return ErrorMessage.builder()
+                .message("Missing request body")
                 .build();
         }
+
+        return ErrorMessage.builder()
+            .message("Malformed request body")
+            .details(decodingException.getMostSpecificCause().getMessage())
+            .build();
     }
 
-    private ErrorMessage handleServerWebInputException(
-        final ServerWebInputException ex,
-        final ErrorMessage errorMessage
-    ) {
-        return Optional.ofNullable(ex.getMethodParameter())
-            .map(methodParameter -> {
-                errorMessage.setMessage("aaaa");
-                errorMessage.setDetails("det");
-                return errorMessage;
-            })
-            .orElse(errorMessage);
+    private ErrorMessage inputErrorMessage(final ServerWebInputException exception) {
+        return ErrorMessage.builder()
+            .message(Optional.ofNullable(exception.getReason()).orElse("Invalid request input"))
+            .details(exception.getCause() == null ? null : exception.getMostSpecificCause().getMessage())
+            .build();
     }
 
-    private Set<ErrorMessage> handleUnknownTypeOfServerWebInputException(
-        final Throwable throwable,
-        final ErrorMessage errorMessage
-    ) {
-        errorMessage.setDetails(throwable.fillInStackTrace().toString());
+    private Optional<DecodingException> findDecodingCause(final Throwable throwable) {
+        Throwable current = throwable;
+        int depth = 0;
 
-        return Collections.singleton(errorMessage);
-    }
+        while (current != null && !(current instanceof DecodingException) && depth++ < MAX_CAUSE_DEPTH) {
+            current = current.getCause();
+        }
 
-    private Set<ErrorMessage> handleDecodingException(
-        final Throwable throwable,
-        final ErrorMessage errorMessage
-    ) {
-        errorMessage.setMessage("Missing request body");
-        errorMessage.setDetails(throwable.fillInStackTrace().toString());
-
-        return Collections.singleton(errorMessage);
+        return current instanceof DecodingException decodingException
+            ? Optional.of(decodingException)
+            : Optional.empty();
     }
 }
