@@ -79,6 +79,13 @@ GlobalErrorExceptionHandler globalErrorExceptionHandler(
 A custom processor implements `ExceptionProcessor` and maps an exception to an
 `Errors` object (HTTP status + list of `ErrorMessage`).
 
+Processor selection is hierarchy-aware: an exception matches the processor registered
+for its exact class or, failing that, for its most specific registered supertype (e.g.
+`MissingRequestValueException` is handled by the `ServerWebInputException` processor).
+Framework `ResponseStatusException`s without a more specific registration (unmatched
+route → 404, unsupported method → 405, …) keep their own status; exceptions with no
+matching registration at all fall back to the default processor (HTTP 500).
+
 ### Info endpoint
 
 `InfoController` (active in web applications only) exposes `GET /info` with the
