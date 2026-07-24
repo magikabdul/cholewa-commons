@@ -15,6 +15,8 @@ public class WebExchangeBindExceptionProcessor implements ExceptionProcessor {
 
     @Override
     public Errors apply(final Throwable throwable) {
+        log.error("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
+
         WebExchangeBindException exception = (WebExchangeBindException) throwable;
 
         return Errors.builder()
