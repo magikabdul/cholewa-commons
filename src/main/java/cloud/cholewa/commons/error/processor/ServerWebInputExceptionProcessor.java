@@ -2,6 +2,7 @@ package cloud.cholewa.commons.error.processor;
 
 import cloud.cholewa.commons.error.model.ErrorMessage;
 import cloud.cholewa.commons.error.model.Errors;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ServerWebInputException;
@@ -9,12 +10,15 @@ import org.springframework.web.server.ServerWebInputException;
 import java.util.Collections;
 import java.util.Optional;
 
+@Slf4j
 public class ServerWebInputExceptionProcessor implements ExceptionProcessor {
 
     private static final int MAX_CAUSE_DEPTH = 16;
 
     @Override
     public Errors apply(final Throwable throwable) {
+        log.warn("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
+
         final ServerWebInputException exception = (ServerWebInputException) throwable;
 
         return Errors.builder()

@@ -35,7 +35,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.0.1</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -85,6 +85,12 @@ for its exact class or, failing that, for its most specific registered supertype
 Framework `ResponseStatusException`s without a more specific registration (unmatched
 route → 404, unsupported method → 405, …) keep their own status; exceptions with no
 matching registration at all fall back to the default processor (HTTP 500).
+
+Every built-in processor logs the exception it handles with a uniform
+`Handled [<exception class>]: …` line — at `WARN` level for 4xx responses and `ERROR`
+for 5xx (processors with a dynamic status pick the level from the resolved status).
+Only the default processor logs the stack trace. Custom processors registered via
+`withCustomErrorProcessor` are responsible for their own logging.
 
 ### Info endpoint
 

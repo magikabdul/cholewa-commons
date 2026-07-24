@@ -16,17 +16,28 @@ public class WebClientResponseExceptionProcessor implements ExceptionProcessor {
     public Errors apply(final Throwable throwable) {
         final WebClientResponseException webClientResponseException = (WebClientResponseException) throwable;
 
-        log.error(
-            "Webclient got response code: {}, error: {}",
-            webClientResponseException.getStatusCode(),
-            throwable.getLocalizedMessage()
-        );
+        final HttpStatus httpStatus =
+            Optional.ofNullable(HttpStatus.resolve(webClientResponseException.getStatusCode().value()))
+                .orElse(HttpStatus.INTERNAL_SERVER_ERROR);
+
+        if (httpStatus.is5xxServerError()) {
+            log.error(
+                "Handled [{}]: downstream response {}, {}",
+                throwable.getClass().getSimpleName(),
+                webClientResponseException.getStatusCode(),
+                throwable.getLocalizedMessage()
+            );
+        } else {
+            log.warn(
+                "Handled [{}]: downstream response {}, {}",
+                throwable.getClass().getSimpleName(),
+                webClientResponseException.getStatusCode(),
+                throwable.getLocalizedMessage()
+            );
+        }
 
         return Errors.builder()
-            .httpStatus(
-                Optional.ofNullable(HttpStatus.resolve(webClientResponseException.getStatusCode().value()))
-                    .orElse(HttpStatus.INTERNAL_SERVER_ERROR)
-            )
+            .httpStatus(httpStatus)
             .errors(
                 Collections.singleton(
                     ErrorMessage.builder()
