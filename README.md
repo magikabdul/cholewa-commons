@@ -86,6 +86,12 @@ Framework `ResponseStatusException`s without a more specific registration (unmat
 route → 404, unsupported method → 405, …) keep their own status; exceptions with no
 matching registration at all fall back to the default processor (HTTP 500).
 
+Every built-in processor logs the exception it handles with a uniform
+`Handled [<exception class>]: …` line — at `WARN` level for 4xx responses and `ERROR`
+for 5xx (processors with a dynamic status pick the level from the resolved status).
+Only the default processor logs the stack trace. Custom processors registered via
+`withCustomErrorProcessor` are responsible for their own logging.
+
 ### Info endpoint
 
 `InfoController` (active in web applications only) exposes `GET /info` with the
