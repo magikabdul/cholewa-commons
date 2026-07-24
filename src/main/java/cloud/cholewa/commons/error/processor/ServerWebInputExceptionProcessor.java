@@ -17,7 +17,7 @@ public class ServerWebInputExceptionProcessor implements ExceptionProcessor {
 
     @Override
     public Errors apply(final Throwable throwable) {
-        log.error("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
+        log.warn("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
 
         final ServerWebInputException exception = (ServerWebInputException) throwable;
 

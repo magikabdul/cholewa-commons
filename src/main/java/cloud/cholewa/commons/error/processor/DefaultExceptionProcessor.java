@@ -13,7 +13,7 @@ public class DefaultExceptionProcessor implements ExceptionProcessor {
     @Override
     public Errors apply(final Throwable throwable) {
 
-        log.error("Generic exception [{}]", throwable.getClass().getSimpleName(), throwable);
+        log.error("Handled [{}]: no dedicated processor registered", throwable.getClass().getSimpleName(), throwable);
 
         return Errors.builder()
             .httpStatus(HttpStatus.INTERNAL_SERVER_ERROR)

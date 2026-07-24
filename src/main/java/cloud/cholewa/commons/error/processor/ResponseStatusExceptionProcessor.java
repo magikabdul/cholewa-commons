@@ -14,12 +14,16 @@ public class ResponseStatusExceptionProcessor implements ExceptionProcessor {
 
     @Override
     public Errors apply(final Throwable throwable) {
-        log.error("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
-
         final ResponseStatusException exception = (ResponseStatusException) throwable;
 
         final HttpStatus httpStatus = Optional.ofNullable(HttpStatus.resolve(exception.getStatusCode().value()))
             .orElse(HttpStatus.INTERNAL_SERVER_ERROR);
+
+        if (httpStatus.is5xxServerError()) {
+            log.error("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
+        } else {
+            log.warn("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
+        }
 
         return Errors.builder()
             .httpStatus(httpStatus)

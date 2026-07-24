@@ -49,8 +49,10 @@ There is no Spring auto-configuration: consumers register
 - Error responses are client-facing in **public repos' services** — keep messages free
   of internals when touching processors.
 - `logError` in the handler is intentionally suppressed; logging happens in the
-  processors instead (HAS-132): every processor logs the handled exception at `error`
-  level (class + message), but only `DefaultExceptionProcessor` logs the stack trace.
+  processors instead (HAS-132): every processor logs the handled exception
+  (`Handled [<class>]: <message>`) — `warn` for 4xx responses, `error` for 5xx
+  (processors with a dynamic status pick the level at runtime) — and only
+  `DefaultExceptionProcessor` logs the stack trace.
 
 ## Tests
 

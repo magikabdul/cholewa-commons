@@ -14,7 +14,7 @@ public class ConstraintViolationExceptionProcessor implements ExceptionProcessor
 
     @Override
     public Errors apply(final Throwable throwable) {
-        log.error("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
+        log.warn("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
 
         return Errors.builder()
             .httpStatus(HttpStatus.BAD_REQUEST)
