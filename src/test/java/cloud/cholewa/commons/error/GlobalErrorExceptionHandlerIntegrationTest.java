@@ -9,6 +9,8 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.codec.ServerCodecConfigurer;
@@ -63,6 +65,16 @@ class GlobalErrorExceptionHandlerIntegrationTest {
         @GetMapping("/downstream")
         String downstream() {
             throw WebClientResponseException.create(404, "Not Found", HttpHeaders.EMPTY, new byte[0], null);
+        }
+
+        @GetMapping("/duplicate-key")
+        String duplicateKey() {
+            throw new DuplicateKeyException("boom");
+        }
+
+        @GetMapping("/null-value")
+        String nullValue() {
+            throw new DataIntegrityViolationException("null value in column");
         }
     }
 
@@ -159,5 +171,25 @@ class GlobalErrorExceptionHandlerIntegrationTest {
         webTestClient.get().uri("/unhandled")
             .exchange()
             .expectStatus().is5xxServerError();
+    }
+
+    @Test
+    void should_return_bad_request_error_without_details_for_data_integrity_violation() {
+        webTestClient.get().uri("/null-value")
+            .exchange()
+            .expectStatus().isBadRequest()
+            .expectBody()
+            .jsonPath("$.errors[0].message").isEqualTo("Data integrity violation")
+            .jsonPath("$.errors[0].details").doesNotExist();
+    }
+
+    @Test
+    void should_return_bad_request_error_without_details_for_duplicate_key_exception() {
+        webTestClient.get().uri("/duplicate-key")
+            .exchange()
+            .expectStatus().isBadRequest()
+            .expectBody()
+            .jsonPath("$.errors[0].message").isEqualTo("Duplicate Key")
+            .jsonPath("$.errors[0].details").doesNotExist();
     }
 }

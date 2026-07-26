@@ -43,6 +43,16 @@ There is no Spring auto-configuration: consumers register
 - Built-in registrations include a `ResponseStatusException` tier — unmatched routes
   (404), unsupported methods (405) etc. keep their own status instead of becoming 500 —
   and `WebClientResponseExceptionProcessor` propagates the downstream HTTP status.
+- **Database integrity tier** (HAS-137): `org.springframework.dao.DuplicateKeyException`
+  → 400 `Duplicate Key`, the parent `DataIntegrityViolationException` → 400
+  `Data integrity violation`; hierarchy-aware selection keeps duplicates on the more
+  specific processor. Neither sets `details` — raw driver text names tables, columns and
+  constraints, so it stays in the log only.
+- `spring-tx` is a **compile-scope** dependency and must stay one: the handler holds class
+  literals for the `org.springframework.dao` types, so a `provided` scope (not transitive)
+  would break every consumer without its own spring-tx — `ai-service` has none, and would
+  fail at startup with `NoClassDefFoundError`. In Boot 4 this pulls no autoconfiguration:
+  `TransactionAutoConfiguration` lives in the separate `spring-boot-transaction` module.
 - `ServerWebInputExceptionProcessor` distinguishes missing vs malformed request body by
   walking the cause chain for `DecodingException` (bounded depth); response `details`
   deliberately carry only cause messages, never stack traces or method signatures.
