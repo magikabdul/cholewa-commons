@@ -57,8 +57,8 @@ GitHub Packages requires authentication even for public artifacts — configure 
 
 Register `GlobalErrorExceptionHandler` as a bean; it renders every unhandled exception
 as an `Errors` JSON body. Processors for common exceptions (validation, `WebClient`
-errors, `NoSuchElementException`, …) are built in; service-specific exceptions plug in
-via `withCustomErrorProcessor`:
+errors, `NoSuchElementException`, database integrity violations, …) are built in;
+service-specific exceptions plug in via `withCustomErrorProcessor`:
 
 ```java
 @Bean
@@ -85,6 +85,13 @@ for its exact class or, failing that, for its most specific registered supertype
 Framework `ResponseStatusException`s without a more specific registration (unmatched
 route → 404, unsupported method → 405, …) keep their own status; exceptions with no
 matching registration at all fall back to the default processor (HTTP 500).
+
+Database integrity errors have their own tier: `DuplicateKeyException` renders as
+`400` with the message `Duplicate Key`, and every other
+`DataIntegrityViolationException` (a `NOT NULL` or check-constraint violation, …) as
+`400` with `Data integrity violation`. Both deliberately omit `details` — the raw
+driver text names tables, columns and constraints, which must not reach a client; it
+is logged instead. These processors are why the library depends on `spring-tx`.
 
 Every built-in processor logs the exception it handles with a uniform
 `Handled [<exception class>]: …` line — at `WARN` level for 4xx responses and `ERROR`

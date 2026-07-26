@@ -3,6 +3,7 @@ package cloud.cholewa.commons.error;
 import cloud.cholewa.commons.error.model.Errors;
 import cloud.cholewa.commons.error.model.NotImplementedException;
 import cloud.cholewa.commons.error.processor.ConstraintViolationExceptionProcessor;
+import cloud.cholewa.commons.error.processor.DataIntegrityViolationExceptionProcessor;
 import cloud.cholewa.commons.error.processor.DefaultExceptionProcessor;
 import cloud.cholewa.commons.error.processor.DuplicateKeyExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ExceptionProcessor;
@@ -21,6 +22,8 @@ import org.springframework.boot.webflux.autoconfigure.error.AbstractErrorWebExce
 import org.springframework.boot.webflux.error.ErrorAttributes;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.annotation.Order;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.codec.ServerCodecConfigurer;
 import org.springframework.web.bind.support.WebExchangeBindException;
 import org.springframework.web.reactive.function.BodyInserters;
@@ -32,7 +35,6 @@ import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebInputException;
-import org.yaml.snakeyaml.constructor.DuplicateKeyException;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
@@ -60,6 +62,7 @@ public class GlobalErrorExceptionHandler extends AbstractErrorWebExceptionHandle
         processors = Map.ofEntries(
             Map.entry(ConstraintViolationException.class, new ConstraintViolationExceptionProcessor()),
             Map.entry(DuplicateKeyException.class, new DuplicateKeyExceptionProcessor()),
+            Map.entry(DataIntegrityViolationException.class, new DataIntegrityViolationExceptionProcessor()),
             Map.entry(NotImplementedException.class, new NotImplementedExceptionProcessor()),
             Map.entry(ResponseStatusException.class, new ResponseStatusExceptionProcessor()),
             Map.entry(ServerWebInputException.class, new ServerWebInputExceptionProcessor()),

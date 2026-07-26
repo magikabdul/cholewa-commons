@@ -8,7 +8,7 @@ import org.springframework.http.HttpStatus;
 import java.util.Collections;
 
 @Slf4j
-public class DuplicateKeyExceptionProcessor implements ExceptionProcessor {
+public class DataIntegrityViolationExceptionProcessor implements ExceptionProcessor {
 
     @Override
     public Errors apply(final Throwable throwable) {
@@ -18,7 +18,7 @@ public class DuplicateKeyExceptionProcessor implements ExceptionProcessor {
             .httpStatus(HttpStatus.BAD_REQUEST)
             .errors(Collections.singleton(
                 ErrorMessage.builder()
-                    .message("Duplicate Key")
+                    .message("Data integrity violation")
                     .build()
             ))
             .build();

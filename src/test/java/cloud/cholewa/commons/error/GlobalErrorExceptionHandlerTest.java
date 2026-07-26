@@ -1,7 +1,9 @@
 package cloud.cholewa.commons.error;
 
 import cloud.cholewa.commons.error.model.Errors;
+import cloud.cholewa.commons.error.processor.DataIntegrityViolationExceptionProcessor;
 import cloud.cholewa.commons.error.processor.DefaultExceptionProcessor;
+import cloud.cholewa.commons.error.processor.DuplicateKeyExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ResponseStatusExceptionProcessor;
 import cloud.cholewa.commons.error.processor.ServerWebInputExceptionProcessor;
@@ -10,6 +12,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.web.WebProperties;
 import org.springframework.boot.webflux.error.DefaultErrorAttributes;
 import org.springframework.context.support.StaticApplicationContext;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.codec.ServerCodecConfigurer;
 import org.springframework.web.server.MissingRequestValueException;
@@ -79,5 +84,23 @@ class GlobalErrorExceptionHandlerTest {
             };
 
         assertThat(handler.resolveProcessor(exception)).isSameAs(subclassProcessor);
+    }
+
+    @Test
+    void should_select_duplicate_key_processor_for_spring_duplicate_key_exception() {
+        assertThat(handler.resolveProcessor(new DuplicateKeyException("boom")))
+            .isInstanceOf(DuplicateKeyExceptionProcessor.class);
+    }
+
+    @Test
+    void should_select_integrity_processor_for_other_data_integrity_violations() {
+        assertThat(handler.resolveProcessor(new DataIntegrityViolationException("null value in column")))
+            .isInstanceOf(DataIntegrityViolationExceptionProcessor.class);
+    }
+
+    @Test
+    void should_fall_back_to_default_processor_for_infrastructure_data_access_errors() {
+        assertThat(handler.resolveProcessor(new DataAccessResourceFailureException("db down")))
+            .isInstanceOf(DefaultExceptionProcessor.class);
     }
 }
