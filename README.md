@@ -19,8 +19,9 @@
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/magikabdul/cholewa-commons?style=plastic)
 
 Common building blocks for reactive (WebFlux) Spring Boot services: a global error
-handler with a pluggable exception-processor mechanism, a consistent JSON error model
-and a simple `/info` endpoint exposing application name, version and git commit.
+handler with a pluggable exception-processor mechanism, a consistent JSON error model,
+an auto-configured pooled R2DBC connection factory and a simple `/info` endpoint exposing
+application name, version and git commit.
 
 Used by the [smart-home-automation-system](https://github.com/smart-home-automation-system)
 services (`amx-service`, `api-gateway-service`, `boiler-service`, `database-service`,
@@ -98,6 +99,48 @@ Every built-in processor logs the exception it handles with a uniform
 for 5xx (processors with a dynamic status pick the level from the resolved status).
 Only the default processor logs the stack trace. Custom processors registered via
 `withCustomErrorProcessor` are responsible for their own logging.
+
+### R2DBC connection factory
+
+Services persisting to PostgreSQL over R2DBC get a pooled `ConnectionFactory` from
+auto-configuration — no `DbConfig` class of their own. It activates when
+`io.r2dbc.spi.ConnectionFactory` and `io.r2dbc.pool.ConnectionPool` are on the classpath
+(both arrive with `spring-boot-starter-data-r2dbc`) and `database.host` is set, and it backs
+off when the service declares a `ConnectionFactory` bean itself. Services configuring their
+database the Boot way, through `spring.r2dbc.*`, are unaffected.
+
+The connection uses `sslMode=REQUIRE` and is wrapped in an `io.r2dbc.pool.ConnectionPool`
+disposed on shutdown:
+
+```yaml
+database:
+  host: ${database-host:localhost}
+  port: ${database-port:5432}
+  name: ${database-name:dummyName}
+  username: ${database-user:dummyUser}
+  password: ${database-password:dummyPassword}
+  pool:
+    max-size: 8
+```
+
+| Property | Default | Description |
+|---|---|---|
+| `database.host` | — | Host; **also the switch** that activates the auto-configuration |
+| `database.port` | — | Port |
+| `database.name` | — | Database name |
+| `database.username` | — | User |
+| `database.password` | — | Password |
+| `database.pool.initial-size` | `2` | Connections opened when the pool warms up |
+| `database.pool.max-size` | `4` | Maximum connections — set per service; the database has a global limit |
+| `database.pool.max-acquire-time` | `PT10S` | How long a caller waits for a free connection |
+| `database.pool.max-idle-time` | `PT5M` | Idle connection lifetime |
+
+Repositories are deliberately **not** enabled here — keep `@EnableR2dbcRepositories` on a
+class in the service (or rely on Boot's own auto-configuration), so the scan starts from the
+service's package and not from this library's.
+
+The bean is named `connectionFactory`, which is also the `name` tag of the `r2dbc_pool_*`
+metrics when Actuator and a Micrometer registry are on the classpath.
 
 ### Info endpoint
 
