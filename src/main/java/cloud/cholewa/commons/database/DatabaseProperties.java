@@ -18,8 +18,8 @@ public record DatabaseProperties(
     public record Pool(
         @DefaultValue("2") int initialSize,
         @DefaultValue("4") int maxSize,
-        @DefaultValue("PT10s") Duration maxAcquireTime,
-        @DefaultValue("PT5m") Duration maxIdleTime
+        @DefaultValue("PT10S") Duration maxAcquireTime,
+        @DefaultValue("PT5M") Duration maxIdleTime
     ) {
     }
 }
