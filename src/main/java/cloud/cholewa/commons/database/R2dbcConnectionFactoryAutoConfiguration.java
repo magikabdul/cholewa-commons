@@ -39,14 +39,15 @@ public class R2dbcConnectionFactoryAutoConfiguration {
             .option(ConnectionFactoryOptions.DATABASE, databaseProperties.name())
             .option(ConnectionFactoryOptions.USER, databaseProperties.username())
             .option(ConnectionFactoryOptions.PASSWORD, databaseProperties.password())
-            .option(Option.valueOf("sslMode"), "REQUIRE")
+            .option(Option.valueOf("sslMode"), databaseProperties.sslMode())
             .build()
         );
 
         //R2dbcAutoConfiguration backs off once this bean exists, so without the pool every query -
         //and every /actuator/health call, which the health indicator answers with its own connection -
-        //opens its own physical connection. The pool name is the service name, so the r2dbc_pool_*
-        //metrics tell the services apart
+        //opens its own physical connection. The pool name only feeds the JMX object name, which is
+        //never registered here - the r2dbc_pool_* metrics are tagged with the Spring bean name by
+        //ConnectionPoolMetricsAutoConfiguration, so every service reports name="connectionFactory"
         final DatabaseProperties.Pool pool = databaseProperties.pool();
 
         return new ConnectionPool(ConnectionPoolConfiguration.builder(connectionFactory)

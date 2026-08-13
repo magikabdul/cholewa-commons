@@ -72,6 +72,32 @@ class R2dbcConnectionFactoryAutoConfigurationTest {
     }
 
     @Test
+    void should_reject_a_configuration_missing_the_mandatory_properties() {
+        contextRunner.withPropertyValues("database.host=localhost").run(context -> {
+            assertThat(context).hasFailed();
+            //the point of the validation: the failure names the properties, unlike the raw
+            //"value must not be null" that ConnectionFactoryOptions would throw
+            assertThat(context.getStartupFailure())
+                .hasStackTraceContaining("port")
+                .hasStackTraceContaining("username");
+        });
+    }
+
+    @Test
+    void should_default_the_ssl_mode_to_require() {
+        contextRunner.withPropertyValues(DATABASE).run(context ->
+            assertThat(context.getBean(DatabaseProperties.class).sslMode()).isEqualTo("REQUIRE"));
+    }
+
+    @Test
+    void should_pass_the_ssl_mode_on_to_the_driver() {
+        contextRunner
+            .withPropertyValues(DATABASE)
+            .withPropertyValues("database.ssl-mode=not-a-mode")
+            .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
     void should_back_off_when_the_service_supplies_its_own_connection_factory() {
         contextRunner
             .withPropertyValues(DATABASE)

@@ -129,11 +129,20 @@ database:
 | `database.port` | — | Port |
 | `database.name` | — | Database name |
 | `database.username` | — | User |
-| `database.password` | — | Password |
-| `database.pool.initial-size` | `2` | Connections opened when the pool warms up |
-| `database.pool.max-size` | `4` | Maximum connections — set per service; the database has a global limit |
+| `database.password` | — | Password (may be empty, but must be present) |
+| `database.ssl-mode` | `REQUIRE` | Driver `sslMode`; lower it only for a database without TLS |
+| `database.pool.initial-size` | `2` | Connections opened when the pool warms up — must not exceed `max-size` |
+| `database.pool.max-size` | `4` | Maximum connections; see the warning below |
 | `database.pool.max-acquire-time` | `PT10S` | How long a caller waits for a free connection |
 | `database.pool.max-idle-time` | `PT5M` | Idle connection lifetime |
+
+The five connection properties are mandatory and validated at bind time, so a missing one
+fails the startup with a message naming it rather than a bare `value must not be null`.
+
+> **Replacing an existing `DbConfig`?** Set `database.pool.max-size` explicitly in the same
+> change. The default of `4` is sized for a new service, and a service whose own pool was
+> larger silently shrinks to it — under load the callers then time out on
+> `max-acquire-time` instead of queueing on the connections they used to have.
 
 Repositories are deliberately **not** enabled here — keep `@EnableR2dbcRepositories` on a
 class in the service (or rely on Boot's own auto-configuration), so the scan starts from the

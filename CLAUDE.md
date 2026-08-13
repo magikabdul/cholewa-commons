@@ -86,6 +86,12 @@ snippet).
   1.3.0 would break such a consumer's startup on a `ConnectionFactoryOptions` null.
 - The r2dbc dependencies are `provided` — safe here, unlike `spring-tx` above, exactly
   because `@ConditionalOnClass` is read via ASM and the class never loads without them.
+- The five connection properties carry bean-validation constraints and the record is
+  `@Validated`: `ConnectionFactoryOptions` rejects a null with a message that does not name
+  the property, so a half-configured consumer would otherwise see only `value must not be
+  null`. `sslMode` is a property (`database.ssl-mode`, default `REQUIRE`) rather than a
+  constant, so a consumer on a database without TLS is not forced to declare its own
+  `ConnectionFactory` bean just to change one option.
 - `@EnableR2dbcRepositories` must **not** move into this package: with no `basePackages` the
   scan base is the annotated class's package, so no consumer repository would be found, and
   its mere presence makes `R2dbcRepositoriesAutoConfiguration` back off. It stays in the
