@@ -36,7 +36,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.3.0</version>
+    <version>1.3.1</version>
 </dependency>
 ```
 
@@ -138,15 +138,20 @@ database:
 
 The five connection properties are mandatory and validated at bind time, so a missing one
 fails the startup with a message naming it rather than a bare `value must not be null`.
+The jar ships the configuration metadata for the whole group, so an IDE completes and
+type-checks these keys without the consumer declaring anything.
 
 > **Replacing an existing `DbConfig`?** Set `database.pool.max-size` explicitly in the same
 > change. The default of `4` is sized for a new service, and a service whose own pool was
 > larger silently shrinks to it — under load the callers then time out on
 > `max-acquire-time` instead of queueing on the connections they used to have.
 
-Repositories are deliberately **not** enabled here — keep `@EnableR2dbcRepositories` on a
-class in the service (or rely on Boot's own auto-configuration), so the scan starts from the
-service's package and not from this library's.
+Repositories are deliberately **not** enabled here, so the scan starts from the service's
+package and not from this library's. The simplest option in the service is to declare
+nothing and let Boot's `R2dbcRepositoriesAutoConfiguration` scan from the application class's
+package. If you do want `@EnableR2dbcRepositories`, put it on a dedicated `@Configuration` —
+on the application class it leaks into `@WebFluxTest` slices, which then fail on the missing
+`r2dbcEntityTemplate`.
 
 The bean is named `connectionFactory`, which is also the `name` tag of the `r2dbc_pool_*`
 metrics when Actuator and a Micrometer registry are on the classpath.

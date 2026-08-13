@@ -71,6 +71,14 @@
 			<artifactId>r2dbc-pool</artifactId>
 			<scope>provided</scope>
 		</dependency>
+		<!-- generates META-INF/spring-configuration-metadata.json for DatabaseProperties, so a
+             consumer gets completion and validation for the database.* group instead of
+             hand-maintaining additional-spring-configuration-metadata.json -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-configuration-processor</artifactId>
+			<optional>true</optional>
+		</dependency>
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>

@@ -92,10 +92,17 @@ snippet).
   null`. `sslMode` is a property (`database.ssl-mode`, default `REQUIRE`) rather than a
   constant, so a consumer on a database without TLS is not forced to declare its own
   `ConnectionFactory` bean just to change one option.
+- `spring-boot-configuration-processor` is on the classpath in `optional` scope so the jar
+  ships `META-INF/spring-configuration-metadata.json` for the `database.*` group. Without it
+  a consumer that has the processor itself loses the completion and validation it had for
+  its own local properties class and starts hand-maintaining
+  `additional-spring-configuration-metadata.json` — `heating-service` did exactly that.
 - `@EnableR2dbcRepositories` must **not** move into this package: with no `basePackages` the
   scan base is the annotated class's package, so no consumer repository would be found, and
-  its mere presence makes `R2dbcRepositoriesAutoConfiguration` back off. It stays in the
-  service.
+  its mere presence makes `R2dbcRepositoriesAutoConfiguration` back off. In the consumer the
+  better move is to drop the annotation altogether and let that auto-configuration scan from
+  the application class's package: put on the application class it leaks into `@WebFluxTest`
+  slices, which then fail on the missing `r2dbcEntityTemplate` (hit in `heating-service`).
 - The nested `Pool` record needs a bare `@DefaultValue` on the `pool` component itself, not
   only on its fields — otherwise a missing `database.pool` group binds to `null` and the pool
   build NPEs.
