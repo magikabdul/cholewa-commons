@@ -30,7 +30,12 @@
 		<sonar.projectKey>magikabdul_cholewa-commons</sonar.projectKey>
 		<sonar.host.url>https://sonarcloud.io</sonar.host.url>
 
+		<!-- surefire appends the Mockito agent to this; sonar.yml overwrites it from the command
+             line with jacoco's prepare-agent, so it must exist for the @{argLine} late replacement -->
+		<argLine/>
+
 		<!--  plugins versions-->
+		<maven-dependency-plugin.version>3.10.0</maven-dependency-plugin.version>
 		<maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
 		<maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
 		<tidy-maven-plugin.version>1.4.0</tidy-maven-plugin.version>
@@ -52,6 +57,21 @@
 			<artifactId>spring-tx</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-r2dbc</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.r2dbc</groupId>
+			<artifactId>r2dbc-spi</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.r2dbc</groupId>
+			<artifactId>r2dbc-pool</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
 			<optional>true</optional>
@@ -71,15 +91,35 @@
 			<artifactId>spring-boot-starter-webflux-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>r2dbc-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-dependency-plugin</artifactId>
+				<version>${maven-dependency-plugin.version}</version>
+				<executions>
+					<execution>
+						<goals>
+							<goal>properties</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>${maven-surefire-plugin.version}</version>
 				<configuration>
+					<!-- loading the mock maker as a real agent: self-attaching stops working on newer
+                         JDKs and already warns. The path property comes from dependency:properties -->
+					<argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
 					<includes>
 						<include>**/*Test.java</include>
 						<include>**/*IT.java</include>
