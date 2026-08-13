@@ -7,10 +7,12 @@ consumers, not just the org ones. Published to GitHub Packages
 (`maven.pkg.github.com/magikabdul/cholewa-commons`, pom server id `github-prv`).
 Java 21, Spring Boot 4.1.0 (`spring-boot-starter-parent`), Maven.
 
-Org consumers: `amx-service`, `api-gateway-service`, `boiler-service`,
-`database-service`, `heating-service`, `shelly-cloud-service`, `water-service` — all
-still on 0.2.x until their own Java 21 migrations; 1.0.x is a breaking line
-(Java 21 bytecode, Jackson 3).
+Org consumers, with the version each is on today (2026-08-13): `boiler-service`,
+`database-service`, `heating-service` and `water-service` on **1.2.0**; `ai-service` and
+`notification-service` on **1.1.0**; `amx-service` and `shelly-cloud-service` on 0.2.1 and
+`api-gateway-service` on 0.1.2 — those three stay on the old line until their own Java 21
+migrations, because 1.0.x is a breaking one (Java 21 bytecode, Jackson 3). This list drifts:
+the authoritative answer is the `cholewa-commons.version` property in each consumer's pom.
 
 Org-wide conventions and working rules (PR flow, branch naming `feature/HAS-<n>`,
 "user writes library code, Claude reviews", public-repo hygiene) live in the workspace
@@ -26,12 +28,18 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
   exception as an `Errors` JSON body via a pluggable `ExceptionProcessor` mechanism.
 - `error/model/` — the JSON error contract shared by all services: `Errors`,
   `ErrorMessage`, `UniqueError`, `ErrorId`, plus `NotImplementedException`.
+- `database/` — `R2dbcConnectionFactoryAutoConfiguration` and `DatabaseProperties`: a
+  pooled PostgreSQL `ConnectionFactory` built from the `database.*` property group, so a
+  database-backed service carries no `DbConfig` of its own (HAS-146).
 - `info/` — `InfoController`: `GET /info` with app name, version and git commit
   (requires `application.title`/`application.version` properties and `GitProperties`
   in the consumer).
 
-There is no Spring auto-configuration: consumers register
-`GlobalErrorExceptionHandler` as a bean themselves (see README for the snippet).
+The only auto-configuration is `R2dbcConnectionFactoryAutoConfiguration` (registered in
+`META-INF/spring/…AutoConfiguration.imports`, guarded by `@ConditionalOnClass` on the R2DBC
+types and `@ConditionalOnProperty` on `database.host`). Everything else is opt-in:
+consumers register `GlobalErrorExceptionHandler` as a bean themselves (see README for the
+snippet).
 
 ## Error handling — the parts worth knowing before changing anything
 
@@ -64,7 +72,41 @@ There is no Spring auto-configuration: consumers register
   (processors with a dynamic status pick the level at runtime) — and only
   `DefaultExceptionProcessor` logs the stack trace.
 
+## R2DBC connection factory — what the guards are for
+
+- Ordered `@AutoConfiguration(before = R2dbcAutoConfiguration.class)`: Boot's own factory is
+  `@ConditionalOnMissingBean` as well, so without the explicit ordering the winner is
+  undefined.
+- Two guards keep the library inert for consumers that do not want it.
+  `@ConditionalOnClass({ConnectionFactory.class, ConnectionPool.class})` names **both** types
+  — `r2dbc-pool` does not come with `spring-boot-r2dbc`; in the services it arrives through
+  `spring-boot-data-r2dbc`, so a consumer can have the SPI without the pool. And
+  `@ConditionalOnProperty(prefix = "database", name = "host")` keeps it off for anyone
+  configuring the database the Boot way, through `spring.r2dbc.*` — without it, upgrading to
+  1.3.0 would break such a consumer's startup on a `ConnectionFactoryOptions` null.
+- The r2dbc dependencies are `provided` — safe here, unlike `spring-tx` above, exactly
+  because `@ConditionalOnClass` is read via ASM and the class never loads without them.
+- `@EnableR2dbcRepositories` must **not** move into this package: with no `basePackages` the
+  scan base is the annotated class's package, so no consumer repository would be found, and
+  its mere presence makes `R2dbcRepositoriesAutoConfiguration` back off. It stays in the
+  service.
+- The nested `Pool` record needs a bare `@DefaultValue` on the `pool` component itself, not
+  only on its fields — otherwise a missing `database.pool` group binds to `null` and the pool
+  build NPEs.
+- Pool size stays per-service configuration: the managed database allows 22 backend
+  connections in total (heating 8 / database 6 / water 4), and a re-split must not require a
+  library release. Note that the `r2dbc_pool_*` metrics are tagged with the **Spring bean
+  name** (`connectionFactory`) by `ConnectionPoolMetricsAutoConfiguration`, not with
+  `ConnectionPoolConfiguration.name(...)`, which only feeds the JMX object name.
+
 ## Tests
+
+`R2dbcConnectionFactoryAutoConfigurationTest` drives the auto-configuration with
+`ApplicationContextRunner`: every guard above, the pool defaults and overrides (asserted on
+the built pool via `getMetrics().getMaxAllocatedSize()`, not just on the bound properties),
+and — through `ImportCandidates` — that the class is really listed in the `.imports` file.
+Run it with `clean`: `mvn test` alone keeps a stale copy of that resource in `target/classes`
+and the check passes even when the file is gone.
 
 `GlobalErrorExceptionHandlerTest` covers selection logic (exact / subclass /
 most-specific / override / fallback); `GlobalErrorExceptionHandlerIntegrationTest` is a
@@ -82,4 +124,8 @@ a major Spring bump may legitimately break them; update the expected text, not t
   `versions:set` from the tag and deploys to GitHub Packages. Tags have no `v` prefix.
 - CI/CD: `CI.yml` (build + tests), `sonar.yml` (SonarCloud), `package.yml` (publish on
   GitHub release). Release flow: the `release` skill from the `smart-home` plugin.
-- After a release, bump the pinned version in the README installation snippet.
+- The README installation snippet pins the version **being released** and is bumped in the
+  same PR as the change, not in a follow-up commit after the release — `main` should always
+  advertise the version a consumer is meant to depend on. The trade-off is accepted: between
+  the merge and `gh release create` the README names a version that is not on GitHub Packages
+  yet, so do not let a merged release PR sit unreleased.
