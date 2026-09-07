@@ -15,7 +15,7 @@ public class DuplicateKeyExceptionProcessor implements ExceptionProcessor {
         log.warn("Handled [{}]: {}", throwable.getClass().getSimpleName(), throwable.getMessage());
 
         return Errors.builder()
-            .httpStatus(HttpStatus.BAD_REQUEST)
+            .httpStatus(HttpStatus.CONFLICT)
             .errors(Collections.singleton(
                 ErrorMessage.builder()
                     .message("Duplicate Key")
