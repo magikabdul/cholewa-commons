@@ -184,10 +184,10 @@ class GlobalErrorExceptionHandlerIntegrationTest {
     }
 
     @Test
-    void should_return_bad_request_error_without_details_for_duplicate_key_exception() {
+    void should_return_conflict_request_error_without_details_for_duplicate_key_exception() {
         webTestClient.get().uri("/duplicate-key")
             .exchange()
-            .expectStatus().isBadRequest()
+            .expectStatus().isEqualTo(HttpStatus.CONFLICT)
             .expectBody()
             .jsonPath("$.errors[0].message").isEqualTo("Duplicate Key")
             .jsonPath("$.errors[0].details").doesNotExist();
