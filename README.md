@@ -89,7 +89,8 @@ route → 404, unsupported method → 405, …) keep their own status; exception
 matching registration at all fall back to the default processor (HTTP 500).
 
 Database integrity errors have their own tier: `DuplicateKeyException` renders as
-`400` with the message `Duplicate Key`, and every other
+`409` with the message `Duplicate Key` — a broken unique constraint is a conflict with
+the current state of the resource, not a malformed request — and every other
 `DataIntegrityViolationException` (a `NOT NULL` or check-constraint violation, …) as
 `400` with `Data integrity violation`. Both deliberately omit `details` — the raw
 driver text names tables, columns and constraints, which must not reach a client; it
