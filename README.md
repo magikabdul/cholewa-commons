@@ -24,9 +24,10 @@ an auto-configured pooled R2DBC connection factory and a simple `/info` endpoint
 application name, version and git commit.
 
 Used by the [smart-home-automation-system](https://github.com/smart-home-automation-system)
-services (`amx-service`, `api-gateway-service`, `boiler-service`, `database-service`,
-`heating-service`, `shelly-cloud-service`, `water-service`) and other applications
-outside that organization.
+services (`ai-service`, `amx-service`, `api-gateway-service`, `boiler-service`,
+`database-service`, `heating-service`, `notification-service`, `presence-service`,
+`shelly-cloud-service`, `water-service`) and other applications outside that
+organization.
 
 ## Installation
 
@@ -36,7 +37,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.3.1</version>
+    <version>1.4.0</version>
 </dependency>
 ```
 
@@ -88,7 +89,8 @@ route → 404, unsupported method → 405, …) keep their own status; exception
 matching registration at all fall back to the default processor (HTTP 500).
 
 Database integrity errors have their own tier: `DuplicateKeyException` renders as
-`400` with the message `Duplicate Key`, and every other
+`409` with the message `Duplicate Key` — a broken unique constraint is a conflict with
+the current state of the resource, not a malformed request — and every other
 `DataIntegrityViolationException` (a `NOT NULL` or check-constraint violation, …) as
 `400` with `Data integrity violation`. Both deliberately omit `details` — the raw
 driver text names tables, columns and constraints, which must not reach a client; it
