@@ -24,9 +24,10 @@ an auto-configured pooled R2DBC connection factory and a simple `/info` endpoint
 application name, version and git commit.
 
 Used by the [smart-home-automation-system](https://github.com/smart-home-automation-system)
-services (`amx-service`, `api-gateway-service`, `boiler-service`, `database-service`,
-`heating-service`, `shelly-cloud-service`, `water-service`) and other applications
-outside that organization.
+services (`ai-service`, `amx-service`, `api-gateway-service`, `boiler-service`,
+`database-service`, `heating-service`, `notification-service`, `presence-service`,
+`shelly-cloud-service`, `water-service`) and other applications outside that
+organization.
 
 ## Installation
 
@@ -36,7 +37,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.3.1</version>
+    <version>1.4.0</version>
 </dependency>
 ```
 
