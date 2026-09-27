@@ -106,6 +106,16 @@ snippet).
 - The nested `Pool` record needs a bare `@DefaultValue` on the `pool` component itself, not
   only on its fields — otherwise a missing `database.pool` group binds to `null` and the pool
   build NPEs.
+- **Validation on acquire is what recovers from a hung connection** (HAS-150, after the
+  2026-09-26 `database-service` outage): `validationQuery("SELECT 1")` bounded by
+  `maxValidationTime`. Do not drop the bound — r2dbc-pool's default validation time is
+  unlimited, so a validation query on a connection the database stopped answering would hang
+  the acquire instead of discarding the connection. On failure the pool invalidates the ref
+  and its default `acquireRetry(1)` allocates a fresh connection within the same acquire.
+  `maxLifeTime` is the backstop: a connection used every 30 s never reaches `maxIdleTime`.
+  When testing the pool with a mocked `ConnectionFactory`, note that the pool calls
+  `create()` **once** and resubscribes to that `Publisher` for every allocation — stub it
+  with a cold `Mono.fromSupplier`, not with consecutive `doReturn` values.
 - Pool size stays per-service configuration: the managed database allows 22 backend
   connections in total (heating 8 / database 6 / water 4), and a re-split must not require a
   library release. Note that the `r2dbc_pool_*` metrics are tagged with the **Spring bean
@@ -118,6 +128,10 @@ snippet).
 `ApplicationContextRunner`: every guard above, the pool defaults and overrides (asserted on
 the built pool via `getMetrics().getMaxAllocatedSize()`, not just on the bound properties),
 and — through `ImportCandidates` — that the class is really listed in the `.imports` file.
+`should_replace_a_connection_that_does_not_answer_the_validation_query` builds the pool
+directly (`connectionPool(...)`) on a mocked factory whose first connection never answers
+`SELECT 1`, and asserts the acquire still succeeds on a second connection — it fails
+(acquire timeout) as soon as the validation query or its time bound is removed.
 Run it with `clean`: `mvn test` alone keeps a stale copy of that resource in `target/classes`
 and the check passes even when the file is gone.
 

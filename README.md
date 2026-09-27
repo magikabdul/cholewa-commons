@@ -37,7 +37,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
 </dependency>
 ```
 
@@ -133,10 +133,23 @@ database:
 | `database.username` | — | User |
 | `database.password` | — | Password (may be empty, but must be present) |
 | `database.ssl-mode` | `REQUIRE` | Driver `sslMode`; lower it only for a database without TLS |
+| `database.connect-timeout` | `PT10S` | How long opening a physical connection may take |
 | `database.pool.initial-size` | `2` | Connections opened when the pool warms up — must not exceed `max-size` |
 | `database.pool.max-size` | `4` | Maximum connections; see the warning below |
 | `database.pool.max-acquire-time` | `PT10S` | How long a caller waits for a free connection |
 | `database.pool.max-idle-time` | `PT5M` | Idle connection lifetime |
+| `database.pool.max-life-time` | `PT30M` | Total connection lifetime, however busy the connection is |
+| `database.pool.max-validation-time` | `PT5S` | How long the validation query on acquire may take before the connection is discarded |
+
+Every connection handed out by the pool is validated first with `SELECT 1`, bounded by
+`max-validation-time`; a connection that fails or does not answer is closed and replaced
+by a new one within the same acquire. This is what lets a service recover on its own from a
+connection the database stopped answering — without it a caller that times out cancels its
+query, the connection goes back to the pool with the query still queued on it, every later
+caller queues behind it, and once the driver's request queue is full every query fails with
+`RequestQueueException` until the pod is restarted (`database-service`, 2026-09-26). The
+check costs one round-trip per acquire. `max-life-time` is the backstop: a connection used
+every few seconds never reaches `max-idle-time`. The driver also enables TCP keepalive.
 
 The five connection properties are mandatory and validated at bind time, so a missing one
 fails the startup with a message naming it rather than a bare `value must not be null`.
