@@ -24,6 +24,8 @@ import org.springframework.context.annotation.Bean;
 @EnableConfigurationProperties(DatabaseProperties.class)
 public class R2dbcConnectionFactoryAutoConfiguration {
 
+    static final String VALIDATION_QUERY = "SELECT 1";
+
     //destroyMethod is explicit: the inferred close() returns a cold Publisher nobody subscribes to,
     //so the pooled connections would survive every shutdown
     @Bean(destroyMethod = "dispose")
@@ -40,6 +42,10 @@ public class R2dbcConnectionFactoryAutoConfiguration {
             .option(ConnectionFactoryOptions.USER, databaseProperties.username())
             .option(ConnectionFactoryOptions.PASSWORD, databaseProperties.password())
             .option(Option.valueOf("sslMode"), databaseProperties.sslMode())
+            .option(ConnectionFactoryOptions.CONNECT_TIMEOUT, databaseProperties.connectTimeout())
+            //the OS probes an idle socket only after hours, but it is the only thing that ever closes
+            //a connection whose peer vanished without a FIN - validation on acquire catches it far sooner
+            .option(Option.valueOf("tcpKeepAlive"), true)
             .build()
         );
 
@@ -48,14 +54,28 @@ public class R2dbcConnectionFactoryAutoConfiguration {
         //opens its own physical connection. The pool name only feeds the JMX object name, which is
         //never registered here - the r2dbc_pool_* metrics are tagged with the Spring bean name by
         //ConnectionPoolMetricsAutoConfiguration, so every service reports name="connectionFactory"
-        final DatabaseProperties.Pool pool = databaseProperties.pool();
+        return connectionPool(connectionFactory, databaseProperties.pool(), poolName);
+    }
 
+    //Validation is what recovers from a connection the database stopped answering (2026-09-26): a
+    //caller that gives up cancels its query, and the cancel hands the connection back to the pool while
+    //the query is still queued on it. Every later caller then queues behind it until the driver's request
+    //queue is full and each query fails at once - for as long as the pod runs. A round-trip on acquire,
+    //bounded by max-validation-time, discards such a connection on the next request and opens a new one.
+    static ConnectionPool connectionPool(
+        final ConnectionFactory connectionFactory,
+        final DatabaseProperties.Pool pool,
+        final String poolName
+    ) {
         return new ConnectionPool(ConnectionPoolConfiguration.builder(connectionFactory)
             .name(poolName)
             .initialSize(pool.initialSize())
             .maxSize(pool.maxSize())
             .maxAcquireTime(pool.maxAcquireTime())
             .maxIdleTime(pool.maxIdleTime())
+            .maxLifeTime(pool.maxLifeTime())
+            .validationQuery(VALIDATION_QUERY)
+            .maxValidationTime(pool.maxValidationTime())
             .build()
         );
     }

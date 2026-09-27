@@ -20,6 +20,7 @@ public record DatabaseProperties(
     //an empty password is a legitimate setup, a missing one is not
     @NotNull String password,
     @DefaultValue("REQUIRE") String sslMode,
+    @DefaultValue("PT10S") Duration connectTimeout,
     @DefaultValue Pool pool
 ) {
 
@@ -27,7 +28,11 @@ public record DatabaseProperties(
         @DefaultValue("2") int initialSize,
         @DefaultValue("4") int maxSize,
         @DefaultValue("PT10S") Duration maxAcquireTime,
-        @DefaultValue("PT5M") Duration maxIdleTime
+        @DefaultValue("PT5M") Duration maxIdleTime,
+        //a connection busy every few seconds never reaches max-idle-time, so without a lifetime
+        //it is kept for as long as the pod runs, however broken it is
+        @DefaultValue("PT30M") Duration maxLifeTime,
+        @DefaultValue("PT5S") Duration maxValidationTime
     ) {
     }
 }
