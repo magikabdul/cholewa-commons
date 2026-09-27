@@ -32,7 +32,9 @@ public record DatabaseProperties(
         //a connection busy every few seconds never reaches max-idle-time, so without a lifetime
         //it is kept for as long as the pod runs, however broken it is
         @DefaultValue("PT30M") Duration maxLifeTime,
-        @DefaultValue("PT5S") Duration maxValidationTime
+        //short, because every broken connection a caller runs into costs it this long; it runs inside
+        //max-acquire-time, so it has to stay well below it
+        @DefaultValue("PT2S") Duration maxValidationTime
     ) {
     }
 }

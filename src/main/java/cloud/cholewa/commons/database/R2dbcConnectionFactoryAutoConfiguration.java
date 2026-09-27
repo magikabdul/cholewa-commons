@@ -61,7 +61,14 @@ public class R2dbcConnectionFactoryAutoConfiguration {
     //caller that gives up cancels its query, and the cancel hands the connection back to the pool while
     //the query is still queued on it. Every later caller then queues behind it until the driver's request
     //queue is full and each query fails at once - for as long as the pod runs. A round-trip on acquire,
-    //bounded by max-validation-time, discards such a connection on the next request and opens a new one.
+    //bounded by max-validation-time, discards such a connection on the next request.
+    //
+    //Recovery is gradual, not within one caller's acquire: a failed validation invalidates the connection
+    //and r2dbc-pool retries once (its default), and the retry takes the next idle connection, which after
+    //an outage is likely broken too. So an acquire discards up to two broken connections, and its caller
+    //may still get an error; the pool is clean after a few requests. A larger retry count was tried and
+    //rejected (HAS-150): r2dbc-pool retries every failure, so pool exhaustion or an unreachable database
+    //would multiply each caller's wait by the retry count.
     static ConnectionPool connectionPool(
         final ConnectionFactory connectionFactory,
         final DatabaseProperties.Pool pool,

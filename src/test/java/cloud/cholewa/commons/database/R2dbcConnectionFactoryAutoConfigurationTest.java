@@ -2,6 +2,7 @@ package cloud.cholewa.commons.database;
 
 import io.r2dbc.pool.ConnectionPool;
 import io.r2dbc.spi.Connection;
+import io.r2dbc.spi.R2dbcTimeoutException;
 import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
@@ -67,7 +68,7 @@ class R2dbcConnectionFactoryAutoConfigurationTest {
                     Duration.ofSeconds(10),
                     Duration.ofMinutes(5),
                     Duration.ofMinutes(30),
-                    Duration.ofSeconds(5)
+                    Duration.ofSeconds(2)
                 ));
             assertThat(maxAllocatedSizeOf(context.getBean(ConnectionFactory.class))).isEqualTo(4);
         });
@@ -83,7 +84,7 @@ class R2dbcConnectionFactoryAutoConfigurationTest {
                 "database.pool.max-acquire-time=PT3S",
                 "database.pool.max-idle-time=PT1M",
                 "database.pool.max-life-time=PT10M",
-                "database.pool.max-validation-time=PT2S"
+                "database.pool.max-validation-time=PT1S"
             )
             .run(context -> {
                 assertThat(context.getBean(DatabaseProperties.class).pool())
@@ -93,7 +94,7 @@ class R2dbcConnectionFactoryAutoConfigurationTest {
                         Duration.ofSeconds(3),
                         Duration.ofMinutes(1),
                         Duration.ofMinutes(10),
-                        Duration.ofSeconds(2)
+                        Duration.ofSeconds(1)
                     ));
                 assertThat(maxAllocatedSizeOf(context.getBean(ConnectionFactory.class))).isEqualTo(8);
             });
@@ -151,6 +152,50 @@ class R2dbcConnectionFactoryAutoConfigurationTest {
 
             verify(hung).close();
             assertThat(allocations).hasValue(2);
+        } finally {
+            pool.dispose();
+        }
+    }
+
+    @Test
+    void should_recover_from_broken_idle_connections_within_a_few_acquires() {
+        final Connection firstBroken = connection(Flux.never());
+        final Connection secondBroken = connection(Flux.never());
+        final Connection healthy = connection(Flux.just(result()));
+        final AtomicInteger allocations = new AtomicInteger();
+        final ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
+        doReturn(Mono.fromSupplier(() -> switch (allocations.getAndIncrement()) {
+            case 0 -> firstBroken;
+            case 1 -> secondBroken;
+            default -> healthy;
+        })).when(connectionFactory).create();
+
+        final ConnectionPool pool = R2dbcConnectionFactoryAutoConfiguration.connectionPool(
+            connectionFactory,
+            new DatabaseProperties.Pool(
+                2, 3, Duration.ofSeconds(10), Duration.ofMinutes(5), Duration.ofMinutes(30), Duration.ofMillis(200)
+            ),
+            "test"
+        );
+
+        try {
+            //both broken connections sit idle in the pool, as after an outage
+            StepVerifier.create(pool.warmup()).expectNext(2).verifyComplete();
+
+            //the first acquire validates one broken connection, retries once on the next idle one - broken
+            //too - and gives up: its caller gets the error, but both connections are gone
+            StepVerifier.create(pool.create())
+                .expectErrorMatches(error -> error instanceof R2dbcTimeoutException
+                    && error.getMessage().startsWith("Validation timed out"))
+                .verify(Duration.ofSeconds(5));
+            verify(firstBroken).close();
+            verify(secondBroken).close();
+
+            //the next acquire finds no broken connection left and gets a working one
+            StepVerifier.create(pool.create())
+                .expectNextCount(1)
+                .verifyComplete();
+            assertThat(allocations.get()).isGreaterThanOrEqualTo(3);
         } finally {
             pool.dispose();
         }
