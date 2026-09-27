@@ -37,7 +37,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.5.0</version>
+    <version>1.5.1</version>
 </dependency>
 ```
 
@@ -136,20 +136,36 @@ database:
 | `database.connect-timeout` | `PT10S` | How long opening a physical connection may take |
 | `database.pool.initial-size` | `2` | Connections opened when the pool warms up — must not exceed `max-size` |
 | `database.pool.max-size` | `4` | Maximum connections; see the warning below |
-| `database.pool.max-acquire-time` | `PT10S` | How long a caller waits for a free connection |
+| `database.pool.max-acquire-time` | `PT10S` | Time limit of one acquire attempt (waiting for a free connection, opening one, validating it); r2dbc-pool retries a failed attempt once, so a caller can wait up to twice this long |
 | `database.pool.max-idle-time` | `PT5M` | Idle connection lifetime |
 | `database.pool.max-life-time` | `PT30M` | Total connection lifetime, however busy the connection is |
-| `database.pool.max-validation-time` | `PT5S` | How long the validation query on acquire may take before the connection is discarded |
+| `database.pool.max-validation-time` | `PT2S` | How long the validation query on acquire may take before the connection is discarded; keep it well below `max-acquire-time` — at or above it, the acquire limit always cuts the validation off and a broken connection is never discarded |
 
 Every connection handed out by the pool is validated first with `SELECT 1`, bounded by
-`max-validation-time`; a connection that fails or does not answer is closed and replaced
-by a new one within the same acquire. This is what lets a service recover on its own from a
-connection the database stopped answering — without it a caller that times out cancels its
-query, the connection goes back to the pool with the query still queued on it, every later
-caller queues behind it, and once the driver's request queue is full every query fails with
+`max-validation-time`. This is what lets a service recover on its own from a connection the
+database stopped answering — without it a caller that times out cancels its query, the
+connection goes back to the pool with the query still queued on it, every later caller
+queues behind it, and once the driver's request queue is full every query fails with
 `RequestQueueException` until the pod is restarted (`database-service`, 2026-09-26). The
-check costs one round-trip per acquire. `max-life-time` is the backstop: a connection used
-every few seconds never reaches `max-idle-time`. The driver also enables TCP keepalive.
+check costs one round-trip per acquire.
+
+**Recovery is gradual, not within one request.** A connection that fails the check is
+discarded and the acquire is retried once (r2dbc-pool's default); the retry takes the next
+idle connection, which after an outage is likely broken too. So one acquire discards up to
+two broken connections and its caller may still get an error — a pool of `max-size`
+broken connections is clean after about `max-size / 2` requests. A connection whose request
+queue is already full fails the check at once; a silent one costs its caller up to
+`max-validation-time`, which is why the default is short. A larger retry count is
+deliberately not used: r2dbc-pool retries *every* failure, so with the pool exhausted or the
+database unreachable each caller would wait `max-acquire-time` once per retry.
+
+Known limits: the validation runs inside the acquire's `max-acquire-time`, together with any
+wait for a free connection and the opening of a new one — a validation cut off by that limit
+puts its connection back into the pool unchecked, to be caught by the next acquire. Discarding
+a connection waits for its `close()`, which has no time limit of its own.
+
+`max-life-time` is the backstop: a connection used every few seconds never reaches
+`max-idle-time`. The driver also enables TCP keepalive.
 
 The five connection properties are mandatory and validated at bind time, so a missing one
 fails the startup with a message naming it rather than a bare `value must not be null`.

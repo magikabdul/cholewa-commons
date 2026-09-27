@@ -51,8 +51,9 @@ snippet).
 - Built-in registrations include a `ResponseStatusException` tier — unmatched routes
   (404), unsupported methods (405) etc. keep their own status instead of becoming 500 —
   and `WebClientResponseExceptionProcessor` propagates the downstream HTTP status.
-- **Database integrity tier** (HAS-137): `org.springframework.dao.DuplicateKeyException`
-  → 400 `Duplicate Key`, the parent `DataIntegrityViolationException` → 400
+- **Database integrity tier** (HAS-137, HAS-150): `org.springframework.dao.DuplicateKeyException`
+  → **409** `Duplicate Key` since 1.4.0 (400 before — a broken unique is a conflict with the
+  current state, not a malformed request), the parent `DataIntegrityViolationException` → 400
   `Data integrity violation`; hierarchy-aware selection keeps duplicates on the more
   specific processor. Neither sets `details` — raw driver text names tables, columns and
   constraints, so it stays in the log only.
@@ -111,7 +112,20 @@ snippet).
   `maxValidationTime`. Do not drop the bound — r2dbc-pool's default validation time is
   unlimited, so a validation query on a connection the database stopped answering would hang
   the acquire instead of discarding the connection. On failure the pool invalidates the ref
-  and its default `acquireRetry(1)` allocates a fresh connection within the same acquire.
+  and retries the acquire once (r2dbc-pool's default `acquireRetry(1)`) — the retry takes the
+  **most recently used idle connection if there is one** (a fresh one only when none is idle),
+  and after an outage that idle one is likely broken too.
+  So recovery is gradual: one acquire discards up to two broken connections and its caller may
+  still fail; the pool is clean after a few requests. **Do not raise `acquireRetry`** — tried
+  and rejected in HAS-150: r2dbc-pool retries *every* failure, including the per-attempt
+  `maxAcquireTime` timeout on an exhausted pool and connect failures, so a caller would wait
+  `(retries + 1) × maxAcquireTime` and an unreachable database would get `retries + 1` connect
+  attempts per request. Retrying only validation failures would need telling them apart by
+  exception message — not worth it. The per-attempt `maxAcquireTime` wraps the queue wait,
+  the connect and the validation; a validation cut off by it is *cancelled*, which releases the
+  connection back unchecked (`Operators.discardOnCancel` in `ConnectionPool`) — hence the
+  short 2 s `maxValidationTime` default. Invalidating a connection also waits for its
+  `close()`, which has no time limit.
   `maxLifeTime` is the backstop: a connection used every 30 s never reaches `maxIdleTime`.
   When testing the pool with a mocked `ConnectionFactory`, note that the pool calls
   `create()` **once** and resubscribes to that `Publisher` for every allocation — stub it
@@ -132,6 +146,9 @@ and — through `ImportCandidates` — that the class is really listed in the `.
 directly (`connectionPool(...)`) on a mocked factory whose first connection never answers
 `SELECT 1`, and asserts the acquire still succeeds on a second connection — it fails
 (acquire timeout) as soon as the validation query or its time bound is removed.
+`should_recover_from_broken_idle_connections_within_a_few_acquires` pins the documented
+recovery: with two broken idle connections the first acquire fails but discards both, the next
+one succeeds.
 Run it with `clean`: `mvn test` alone keeps a stale copy of that resource in `target/classes`
 and the check passes even when the file is gone.
 
