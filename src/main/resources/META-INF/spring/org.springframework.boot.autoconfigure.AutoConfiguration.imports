@@ -1,1 +1,2 @@
 cloud.cholewa.commons.database.R2dbcConnectionFactoryAutoConfiguration
+cloud.cholewa.commons.validation.ValidationMessagesAutoConfiguration

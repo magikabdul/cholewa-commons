@@ -7,7 +7,7 @@
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=magikabdul_cholewa-commons&metric=coverage)](https://sonarcloud.io/summary/new_code?id=magikabdul_cholewa-commons)
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=magikabdul_cholewa-commons&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=magikabdul_cholewa-commons)
 ![Java](https://img.shields.io/badge/java-21-yellow?style=plastic)
-![SpringBoot](https://img.shields.io/badge/SpringBoot-4.1.0-blue?style=plastic)
+![SpringBoot](https://img.shields.io/badge/SpringBoot-4.1.1-blue?style=plastic)
 
 ![GitHub issues](https://img.shields.io/github/issues/magikabdul/cholewa-commons?style=plastic)
 ![GitHub contributors](https://img.shields.io/github/contributors/magikabdul/cholewa-commons?style=plastic)
@@ -20,8 +20,8 @@
 
 Common building blocks for reactive (WebFlux) Spring Boot services: a global error
 handler with a pluggable exception-processor mechanism, a consistent JSON error model,
-an auto-configured pooled R2DBC connection factory and a simple `/info` endpoint exposing
-application name, version and git commit.
+an auto-configured pooled R2DBC connection factory, Bean Validation messages pinned to
+English and a simple `/info` endpoint exposing application name, version and git commit.
 
 Used by the [smart-home-automation-system](https://github.com/smart-home-automation-system)
 services (`ai-service`, `amx-service`, `api-gateway-service`, `boiler-service`,
@@ -37,7 +37,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.5.1</version>
+    <version>1.6.0</version>
 </dependency>
 ```
 
@@ -186,6 +186,23 @@ on the application class it leaks into `@WebFluxTest` slices, which then fail on
 
 The bean is named `connectionFactory`, which is also the `name` tag of the `r2dbc_pool_*`
 metrics when Actuator and a Micrometer registry are on the classpath.
+
+### Validation messages in English
+
+Bean Validation words a violated constraint in the locale of the JVM or of the request, so
+the same request is answered with `nie może być odstępem` on one machine and `must not be
+blank` on another. From 1.6.0 an auto-configuration replaces the message interpolator of the
+validator Spring Boot configures with one that ignores the locale it is handed and always
+uses English. Nothing to declare — it is active whenever `spring-boot-validation` is on the
+classpath, which it is for every consumer of this library.
+
+- A constraint with its own `message = "…"` is rendered as written, in whatever language.
+- It covers the validator behind `@Valid` request bodies and constrained request
+  parameters. It does **not** cover the validation of `@ConfigurationProperties` at startup:
+  Spring Boot builds a validator of its own for that.
+- To get localized messages back, set `validation.english-messages: false`.
+- A consumer that already carries a customizer doing the same can delete it; until it does,
+  the two coexist.
 
 ### Info endpoint
 
