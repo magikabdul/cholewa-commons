@@ -1,7 +1,7 @@
 {
   "properties": [
     {
-      "name": "validation.english-messages",
+      "name": "cholewa.validation.english-messages",
       "type": "java.lang.Boolean",
       "description": "Whether Bean Validation messages are always worded in English, regardless of the locale of the JVM or of the request. Set to false to get them localized.",
       "defaultValue": true

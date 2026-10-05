@@ -193,14 +193,21 @@ Bean Validation words a violated constraint in the locale of the JVM or of the r
 the same request is answered with `nie może być odstępem` on one machine and `must not be
 blank` on another. From 1.6.0 an auto-configuration replaces the message interpolator of the
 validator Spring Boot configures with one that ignores the locale it is handed and always
-uses English. Nothing to declare — it is active whenever `spring-boot-validation` is on the
-classpath, which it is for every consumer of this library.
+asks for the **root** message bundle — English for the built-in constraints. Nothing to
+declare — it is active whenever `spring-boot-validation` is on the classpath, which it is for
+every consumer of this library.
 
 - A constraint with its own `message = "…"` is rendered as written, in whatever language.
+- `{keys}` are still resolved the way Spring Boot does it — first from the application's
+  `MessageSource`, then from `ValidationMessages` — but always from the root file
+  (`messages.properties`, `ValidationMessages.properties`), never from `_pl` or any other
+  locale variant. Keep the wording you want everyone to see in the root file.
+- A `ValidationConfigurationCustomizer` of your own that installs an interpolator wins: the
+  one from this library runs first.
 - It covers the validator behind `@Valid` request bodies and constrained request
   parameters. It does **not** cover the validation of `@ConfigurationProperties` at startup:
   Spring Boot builds a validator of its own for that.
-- To get localized messages back, set `validation.english-messages: false`.
+- To get localized messages back, set `cholewa.validation.english-messages: false`.
 - A consumer that already carries a customizer doing the same can delete it; until it does,
   the two coexist.
 

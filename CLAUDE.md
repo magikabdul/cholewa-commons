@@ -31,8 +31,9 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
 - `database/` — `R2dbcConnectionFactoryAutoConfiguration` and `DatabaseProperties`: a
   pooled PostgreSQL `ConnectionFactory` built from the `database.*` property group, so a
   database-backed service carries no `DbConfig` of its own (HAS-146).
-- `validation/` — `ValidationMessagesAutoConfiguration`: Bean Validation messages always in
-  English, whatever the locale of the JVM or of the request (HAS-180).
+- `validation/` — `ValidationMessagesAutoConfiguration`: Bean Validation messages always
+  from the root bundle — English for the built-in constraints — whatever the locale of the
+  JVM or of the request (HAS-180).
 - `info/` — `InfoController`: `GET /info` with app name, version and git commit
   (requires `application.title`/`application.version` properties and `GitProperties`
   in the consumer).
@@ -145,16 +146,34 @@ snippet).
 - **Active by default, for every consumer.** `spring-boot-starter-validation` is a compile
   dependency of this library, so every consumer has Bean Validation whether it declares the
   starter or not. For a consumer outside the org on a non-English locale, 1.6.0 changes the
-  wording of its validation errors — that is the point, and `validation.english-messages:
-  false` is the way back. The property has no `@ConfigurationProperties` class behind it, so
+  wording of its validation errors — that is the point, and
+  `cholewa.validation.english-messages: false` is the way back. The key carries the library's
+  prefix (unlike the older `database.*` group) so that it cannot be mistaken for a Spring
+  Boot key or collide with a consumer's own `validation.*` group. The property has no `@ConfigurationProperties` class behind it, so
   its metadata is hand-written in `META-INF/additional-spring-configuration-metadata.json`.
 - **It has to be a `ValidationConfigurationCustomizer`**, not a `MessageInterpolator` bean:
   Spring installs its own locale-aware interpolator and runs the customizers after it.
+- **The interpolator it wraps comes from Boot's `MessageInterpolatorFactory`**, built with the
+  application context — not from `configuration.getDefaultMessageInterpolator()`. The first
+  version used the latter and the review caught what that drops: Boot's
+  `MessageSourceMessageInterpolator` (a `{key}` defined in `messages.properties` would have
+  come out as the literal key) and the fallback to parameter-only interpolation for a
+  consumer without an Expression Language implementation (its context would not start).
+- **`Locale.ROOT`, not `Locale.ENGLISH`.** A bundle lookup for `en` that finds no `_en` file
+  falls back to the JVM default locale *before* the root bundle, so a consumer with
+  `ValidationMessages.properties` and `ValidationMessages_pl.properties` would still get
+  Polish on a Polish machine. Hibernate's own messages escape that only because it ships an
+  empty `ValidationMessages_en.properties`. Asking for the root has no detour. Two tests pin
+  it with bundles in `src/test/resources` that have a `_pl` file and deliberately no `_en`;
+  both fail on `Locale.ENGLISH`.
+- **`@Order(HIGHEST_PRECEDENCE)`**: the customizers are applied in order and the last one to
+  set an interpolator wins, so running first leaves a consumer's own interpolator in place.
 - **The bean is named `cholewaEnglishValidationMessages` on purpose.** `database-service`
   carried the same customizer as `englishValidationMessages` before it moved here; a second
   definition of that name would fail its startup with a bean-definition override on the day
   it upgrades. With different names the two coexist (the test pins it) until the consumer
-  deletes its own.
+  deletes its own — which it should do in the same bump: its copy runs after this one and
+  puts back the version without the `MessageSource` and with `Locale.ENGLISH`.
 - **Not covered: `@ConfigurationProperties` validation.** Boot validates those with a
   validator it builds itself (`ConfigurationPropertiesJsr303Validator`), which no customizer
   reaches — a startup binding error still follows the JVM locale.
