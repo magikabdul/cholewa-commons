@@ -200,8 +200,16 @@ every consumer of this library.
 - A constraint with its own `message = "…"` is rendered as written, in whatever language.
 - `{keys}` are still resolved the way Spring Boot does it — first from the application's
   `MessageSource`, then from `ValidationMessages` — but always from the root file
-  (`messages.properties`, `ValidationMessages.properties`), never from `_pl` or any other
-  locale variant. Keep the wording you want everyone to see in the root file.
+  (`messages.properties`, `ValidationMessages.properties`), not from `_pl` or any other
+  locale variant. Two consequences for an application with message files of its own:
+  - **The wording everyone should see has to be in the root file.** A key that exists only
+    in `messages_en.properties` or `ValidationMessages_en.properties` is no longer found: the
+    response carries the literal `{key}`, or — with no root file at all — the text of the JVM
+    locale.
+  - **A `ReloadableResourceBundleMessageSource` still prefers the JVM locale** unless its
+    `fallbackToSystemLocale` is `false`: it looks the system locale up before the root file
+    whatever locale it is asked for. Spring Boot's default `ResourceBundleMessageSource` and
+    Hibernate's `ValidationMessages` do not.
 - A `ValidationConfigurationCustomizer` of your own that installs an interpolator wins: the
   one from this library runs first.
 - It covers the validator behind `@Valid` request bodies and constrained request

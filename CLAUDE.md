@@ -165,7 +165,11 @@ snippet).
   Polish on a Polish machine. Hibernate's own messages escape that only because it ships an
   empty `ValidationMessages_en.properties`. Asking for the root has no detour. Two tests pin
   it with bundles in `src/test/resources` that have a `_pl` file and deliberately no `_en`;
-  both fail on `Locale.ENGLISH`.
+  both fail on `Locale.ENGLISH`. Two edges of the choice, both documented in the README and
+  both outside the org (no org consumer has a `MessageSource` or `ValidationMessages` of its
+  own): a key that lives only in an `_en` file is not found any more, and a
+  `ReloadableResourceBundleMessageSource` with `fallbackToSystemLocale` left on looks the JVM
+  locale up before the root file whatever it is asked for.
 - **`@Order(HIGHEST_PRECEDENCE)`**: the customizers are applied in order and the last one to
   set an interpolator wins, so running first leaves a consumer's own interpolator in place.
 - **The bean is named `cholewaEnglishValidationMessages` on purpose.** `database-service`
