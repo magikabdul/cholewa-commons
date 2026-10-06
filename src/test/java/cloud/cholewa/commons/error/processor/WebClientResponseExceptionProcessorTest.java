@@ -18,9 +18,9 @@ class WebClientResponseExceptionProcessorTest {
     //without this the code dies at the first hop: the caller of this service sees a 404 and cannot
     //tell a missing record from a missing route
     @Test
-    void should_relay_the_messages_and_codes_of_a_downstream_errors_body_after_its_own_message() {
+    void should_relay_the_named_causes_of_a_downstream_errors_body_after_its_own_message() {
         final WebClientResponseException downstream = downstream(404, "Not Found", """
-            {"errors":[{"message":"Device configuration not found","details":"point 48","code":"NOT_FOUND_DEVICE_CONFIGURATION"},{"message":"second"}]}
+            {"errors":[{"message":"Device configuration not found","details":"point 48","code":"NOT_FOUND_DEVICE_CONFIGURATION"},{"message":"Another cause","code":"OTHER"}]}
             """);
 
         final Errors errors = sut.apply(downstream);
@@ -29,13 +29,52 @@ class WebClientResponseExceptionProcessorTest {
         assertThat(errors.getErrors()).containsExactly(
             //the entry of the releases before 1.7.0, still first and unchanged
             ErrorMessage.builder().message(downstream.getLocalizedMessage()).build(),
+            //message and code travel; the details stay behind
             ErrorMessage.builder()
                 .message("Device configuration not found")
-                .details("point 48")
                 .code("NOT_FOUND_DEVICE_CONFIGURATION")
                 .build(),
-            ErrorMessage.builder().message("second").build()
+            ErrorMessage.builder().message("Another cause").code("OTHER").build()
         );
+    }
+
+    //what DefaultExceptionProcessor of a downstream service answers: the raw exception text in
+    //the details and no code. None of it may reach a caller two hops away
+    @Test
+    void should_not_relay_a_downstream_message_without_a_code() {
+        final WebClientResponseException downstream = downstream(500, "Internal Server Error", """
+            {"errors":[{"message":"Unhandled error, update processor configuration","details":"ERROR: relation \"eaton_device\" does not exist; host db-internal:25060"}]}
+            """);
+
+        final Errors errors = sut.apply(downstream);
+
+        assertThat(errors.getErrors())
+            .containsExactly(ErrorMessage.builder().message(downstream.getLocalizedMessage()).build());
+        assertThat(errors.toString()).doesNotContain("eaton_device", "db-internal");
+    }
+
+    @Test
+    void should_never_relay_details_even_with_a_code() {
+        final WebClientResponseException downstream = downstream(500, "Internal Server Error", """
+            {"errors":[{"message":"Storage failed","details":"password authentication failed for user admin","code":"STORAGE_FAILED"}]}
+            """);
+
+        final Errors errors = sut.apply(downstream);
+
+        assertThat(errors.getErrors()).extracting(ErrorMessage::getCode).containsExactly(null, "STORAGE_FAILED");
+        assertThat(errors.getErrors()).extracting(ErrorMessage::getDetails).containsOnlyNulls();
+    }
+
+    //Spring's own body for a failed binding: an "errors" array whose objects have a code and no
+    //message. It is not this contract, and its codes are not ours to pass on
+    @Test
+    void should_not_relay_the_binding_errors_of_a_spring_error_body() {
+        final WebClientResponseException downstream = downstream(400, "Bad Request", """
+            {"timestamp":"2026-10-06T08:00:00Z","status":400,"errors":[{"field":"name","defaultMessage":"must not be blank","code":"NotBlank"}]}
+            """);
+
+        assertThat(sut.apply(downstream).getErrors())
+            .containsExactly(ErrorMessage.builder().message(downstream.getLocalizedMessage()).build());
     }
 
     @Test

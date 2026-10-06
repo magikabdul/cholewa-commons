@@ -58,14 +58,22 @@ snippet).
 - Built-in registrations include a `ResponseStatusException` tier — unmatched routes
   (404), unsupported methods (405) etc. keep their own status instead of becoming 500 —
   and `WebClientResponseExceptionProcessor` propagates the downstream HTTP status and, since
-  1.7.0 (HAS-174), the downstream **messages and codes**: its own message stays first and
-  unchanged, the messages of an `Errors` body follow. This changes what every consumer with
-  a plain `retrieve()` answers when the service it called speaks the contract — more
-  entries in `errors`, never fewer and never a different first one. A body that is not the
-  contract (a Shelly device, Spring's default error) adds nothing and, on this path, logs
-  nothing: `DownstreamErrors.messagesOf(String)` is silent by design, because the processor
-  already logs the downstream status and a WARN per device error would be noise. Without
-  this a code died at the first hop — the reason the review of HAS-174 asked for it.
+  1.7.0 (HAS-174), the **causes the downstream service named**: its own message stays first
+  and unchanged, then every downstream message **that carries a code**, as `message` + `code`
+  and **without `details`**. Without this a code died at the first hop — the reason the
+  review of HAS-174 asked for it. The filter is the point, do not loosen it: `details` is by
+  convention the raw exception text (`DefaultExceptionProcessor` puts the driver message
+  there), and relaying it would carry a downstream 500's SQL to a caller two hops away, from
+  services the gateway deliberately does not route; and the processor cannot tell an own
+  service from an external system that happens to answer with an `errors` array, while a
+  code is something a service chose to publish. A body that is not the contract (a Shelly
+  device, Spring's default error) adds nothing and, on this path, logs nothing:
+  `DownstreamErrors.messagesOf(String)` is silent by design, because the processor already
+  logs the downstream status and a WARN per device error would be noise. **No org consumer
+  is affected today** (checked 2026-10-06): every client in boiler-, water-, heating-,
+  presence- and amx-service maps its errors to an exception of its own, so no
+  `WebClientResponseException` reaches the global handler; the relay starts working for the
+  first service that uses a plain `retrieve()`.
 - **Database integrity tier** (HAS-137, HAS-150): `org.springframework.dao.DuplicateKeyException`
   → **409** `Duplicate Key` since 1.4.0 (400 before — a broken unique is a conflict with the
   current state, not a malformed request), the parent `DataIntegrityViolationException` → 400
@@ -120,7 +128,11 @@ snippet).
     `LinkedHashSet` — `Set.copyOf` throws on a null and iterates in an order that changes
     with every JVM start;
   - `httpStatus(fallback)` exists because every call exception in the services takes an
-    `HttpStatus`, and `HttpStatus.valueOf` throws for a status without a constant.
+    `HttpStatus`, and `HttpStatus.valueOf` throws for a status without a constant;
+  - an element of `errors` counts only when it **has a `message`**, and one unreadable
+    element does not cost the others: `errors` is a common name, and Spring's body for a
+    failed binding has an array under it whose objects carry a `code` (`NotNull`) and no
+    `message` — read as they are, `hasCode("NotNull")` would match a code no `ErrorId` issued.
 - **`Errors.addError` copies the set every time** (fixed here): the set an `Errors` is built
   with is usually one that cannot be added to — `Collections.singleton` in every processor —
   and the old code called `add` on it. It is the generalised `DeviceDatabaseClient.mapErrorToException` of

@@ -40,13 +40,23 @@ public class WebClientResponseExceptionProcessor implements ExceptionProcessor {
         }
 
         //first what this service knows - which call failed and how - exactly as before 1.7.0; then
-        //what the downstream service said, when its body is the Errors contract. Without the
-        //second part a code dies at the first hop: the caller of this service sees a 404 and
-        //cannot tell a missing record from a missing route
+        //the causes the downstream service named. Without the second part a code dies at the
+        //first hop: the caller of this service sees a 404 and cannot tell a missing record from
+        //a missing route.
+        //Only messages that carry a code travel, and without their details. A code is something
+        //a service chose to publish; details are by convention the raw exception text - SQL, a
+        //driver message, an internal host - and a message without a code may come from anything
+        //that happens to answer with an "errors" array. Neither may reach a caller two hops away
         final Set<ErrorMessage> errors = new LinkedHashSet<>();
         errors.add(ErrorMessage.builder().message(throwable.getLocalizedMessage()).build());
-        errors.addAll(DownstreamErrors.messagesOf(
-            webClientResponseException.getResponseBodyAsString(StandardCharsets.UTF_8)));
+        DownstreamErrors.messagesOf(webClientResponseException.getResponseBodyAsString(StandardCharsets.UTF_8))
+            .stream()
+            .filter(downstream -> downstream.getCode() != null && !downstream.getCode().isBlank())
+            .map(downstream -> ErrorMessage.builder()
+                .message(downstream.getMessage())
+                .code(downstream.getCode())
+                .build())
+            .forEach(errors::add);
 
         return Errors.builder()
             .httpStatus(httpStatus)

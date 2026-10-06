@@ -218,6 +218,51 @@ class DownstreamErrorsTest {
         expectStatusWithoutMessages(json(HttpStatus.NOT_FOUND, "{\"errors\":[null]}"), HttpStatus.NOT_FOUND);
     }
 
+    //Spring's own body for a failed binding has an "errors" array too: objects with a code and no
+    //message. Read as they are, hasCode("NotBlank") would match a code no ErrorId ever issued
+    @Test
+    void should_skip_elements_without_a_message() {
+        final ClientResponse response = json(HttpStatus.BAD_REQUEST, """
+            {"status":400,"errors":[{"field":"name","defaultMessage":"must not be blank","code":"NotBlank"},{},{"message":" "},"text",7]}
+            """);
+
+        DownstreamErrors.read(response)
+            .as(StepVerifier::create)
+            .assertNext(error -> {
+                assertThat(error.errors()).isEmpty();
+                assertThat(error.hasCode("NotBlank")).isFalse();
+            })
+            .verifyComplete();
+    }
+
+    //one element that cannot be read must not cost the code of the one next to it
+    @Test
+    void should_keep_readable_messages_next_to_an_unreadable_one() {
+        final ClientResponse response = json(HttpStatus.NOT_FOUND, """
+            {"errors":[{"message":"ok","code":"X"},{"message":{"nested":1}},{"message":"also ok"}]}
+            """);
+
+        DownstreamErrors.read(response)
+            .as(StepVerifier::create)
+            .assertNext(error -> {
+                assertThat(error.errors()).extracting(ErrorMessage::getMessage).containsExactly("ok", "also ok");
+                assertThat(error.hasCode("X")).isTrue();
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    void should_parse_a_body_already_in_hand_without_ever_throwing() {
+        assertThat(DownstreamErrors.messagesOf(WITH_CODE)).extracting(ErrorMessage::getCode)
+            .containsExactly("NOT_FOUND_DEVICE_CONFIGURATION");
+        assertThat(DownstreamErrors.messagesOf(null)).isEmpty();
+        assertThat(DownstreamErrors.messagesOf("")).isEmpty();
+        assertThat(DownstreamErrors.messagesOf("<html>")).isEmpty();
+        assertThat(DownstreamErrors.messagesOf("{\"errors\":\"boom\"}")).isEmpty();
+        assertThat(DownstreamErrors.messagesOf("{\"status\":404}")).isEmpty();
+        assertThat(logged.list).isEmpty();
+    }
+
     //the connection is lost while the body is still arriving
     @Test
     void should_keep_the_status_when_the_body_breaks_off() {

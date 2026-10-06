@@ -129,10 +129,29 @@ public final class DownstreamErrors {
         //HashSet and the order the downstream service gave its messages is gone
         final Set<ErrorMessage> messages = new LinkedHashSet<>();
         for (final JsonNode error : errors) {
-            if (!error.isNull()) {
-                messages.add(MAPPER.treeToValue(error, ErrorMessage.class));
+            final ErrorMessage message = messageOf(error);
+
+            if (message != null) {
+                messages.add(message);
             }
         }
         return messages;
+    }
+
+    //An element is taken only when it has a message - every message of this contract has one.
+    //"errors" is a common name: Spring's own body for a failed binding has an array under it too,
+    //with a "code" (NotNull) and no "message", and taken as it is that would hand the caller a
+    //code no ErrorId ever issued. One element that cannot be read does not cost the others
+    private static ErrorMessage messageOf(final JsonNode error) {
+        if (!error.isObject()) {
+            return null;
+        }
+        try {
+            final ErrorMessage message = MAPPER.treeToValue(error, ErrorMessage.class);
+
+            return message.getMessage() == null || message.getMessage().isBlank() ? null : message;
+        } catch (final RuntimeException unreadable) {
+            return null;
+        }
     }
 }
