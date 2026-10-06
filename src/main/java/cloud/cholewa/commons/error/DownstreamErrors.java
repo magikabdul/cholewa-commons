@@ -14,6 +14,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -78,17 +79,43 @@ public final class DownstreamErrors {
             .map(messages -> new DownstreamError(status, messages));
     }
 
+    /**
+     * The messages of an error body already in hand - the body a {@code WebClientResponseException}
+     * carries, for one - in the order of the body. Empty for anything that is not the {@link Errors}
+     * contract: no body, another shape, not JSON at all. Never throws and logs nothing; the caller
+     * knows what it was reading and whether that is worth a line.
+     */
+    public static Set<ErrorMessage> messagesOf(final String body) {
+        try {
+            final Set<ErrorMessage> messages = body == null ? null : parse(body);
+
+            return messages == null ? Set.of() : Collections.unmodifiableSet(messages);
+        } catch (final RuntimeException unreadable) {
+            return Set.of();
+        }
+    }
+
     private static Set<ErrorMessage> messagesOf(final String body, final HttpStatusCode status) {
+        final Set<ErrorMessage> messages = parse(body);
+
+        if (messages == null) {
+            log.warn("Error body of a downstream response ({}) is not the Errors contract", status.value());
+            return Set.of();
+        }
+        return messages;
+    }
+
+    //null for valid JSON of another shape - Spring's default error body, for one; an exception
+    //for anything that cannot be read. An Errors body with no messages is the contract all the
+    //same: an empty set, and nothing to warn about
+    private static Set<ErrorMessage> parse(final String body) {
         if (body.isBlank()) {
             return Set.of();
         }
         final JsonNode root = MAPPER.readTree(body);
 
-        //valid JSON of another shape - Spring's default error body, for one. An Errors body with
-        //no messages is the contract all the same, and nothing to warn about
         if (!root.isObject() || !root.has(ERRORS_FIELD)) {
-            log.warn("Error body of a downstream response ({}) is not the Errors contract", status.value());
-            return Set.of();
+            return null;
         }
         final JsonNode errors = root.get(ERRORS_FIELD);
 

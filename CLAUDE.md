@@ -57,7 +57,15 @@ snippet).
   (custom wins on duplicate key).
 - Built-in registrations include a `ResponseStatusException` tier — unmatched routes
   (404), unsupported methods (405) etc. keep their own status instead of becoming 500 —
-  and `WebClientResponseExceptionProcessor` propagates the downstream HTTP status.
+  and `WebClientResponseExceptionProcessor` propagates the downstream HTTP status and, since
+  1.7.0 (HAS-174), the downstream **messages and codes**: its own message stays first and
+  unchanged, the messages of an `Errors` body follow. This changes what every consumer with
+  a plain `retrieve()` answers when the service it called speaks the contract — more
+  entries in `errors`, never fewer and never a different first one. A body that is not the
+  contract (a Shelly device, Spring's default error) adds nothing and, on this path, logs
+  nothing: `DownstreamErrors.messagesOf(String)` is silent by design, because the processor
+  already logs the downstream status and a WARN per device error would be noise. Without
+  this a code died at the first hop — the reason the review of HAS-174 asked for it.
 - **Database integrity tier** (HAS-137, HAS-150): `org.springframework.dao.DuplicateKeyException`
   → **409** `Duplicate Key` since 1.4.0 (400 before — a broken unique is a conflict with the
   current state, not a malformed request), the parent `DataIntegrityViolationException` → 400

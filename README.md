@@ -162,6 +162,14 @@ webClient.get().uri(...)
   for (a proxy's 520) instead of an exception.
 - `error.errors()` is unmodifiable and keeps the order of the body. Copy it before adding to
   it.
+
+A service that does none of this — a plain `retrieve()` whose `WebClientResponseException`
+reaches the global handler — still passes the downstream messages on. From 1.7.0 the built-in
+processor answers with its own message first (`404 Not Found from GET …`, as before) followed
+by the messages of the downstream body, codes included, when that body is the `Errors`
+contract. So a code survives every hop without any code in between; a downstream that does
+not speak the contract is answered exactly as before. `DownstreamErrors.messagesOf(String)`
+is the same parsing for a body you already hold.
 - `hasCode` is what tells "the thing you asked for does not exist" from "this path does not
   exist": both are a 404, only the first carries the code. A service on a release before
   1.7.0 sends no codes, so `hasCode` is `false` for all of its errors.
