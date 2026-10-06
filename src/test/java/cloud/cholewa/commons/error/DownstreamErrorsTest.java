@@ -83,6 +83,21 @@ class DownstreamErrorsTest {
             .verifyComplete();
     }
 
+    //bound as a whole, a Set comes back from Jackson as a HashSet; with this many messages hash
+    //order and body order differ, so the test fails the moment the order is lost again
+    @Test
+    void should_keep_the_order_of_the_body() {
+        final ClientResponse response = json(HttpStatus.BAD_REQUEST, """
+            {"errors":[{"message":"c"},{"message":"a"},{"message":"zz"},{"message":"b"},{"message":"e"},{"message":"d"}]}
+            """);
+
+        DownstreamErrors.read(response)
+            .as(StepVerifier::create)
+            .assertNext(error -> assertThat(error.errors()).extracting(ErrorMessage::getMessage)
+                .containsExactly("c", "a", "zz", "b", "e", "d"))
+            .verifyComplete();
+    }
+
     //a service on an older release of this library: no code in the body, and the 404 is still a 404
     @Test
     void should_read_a_body_without_codes() {

@@ -151,8 +151,10 @@ webClient.get().uri(...)
   the status with an empty set of messages. A body that is not the contract leaves one `WARN`
   line naming only the kind of failure; a missing body, or the contract with no messages,
   leaves none.
-- The wait for the body is bounded: 5 s by default, or `read(response, timeout)`. The headers
-  have arrived by then, and a body that stalls must not keep the status from the caller.
+- The wait for the body is bounded: 2 s by default, or `read(response, timeout)`. The headers
+  have arrived by then, and a body that stalls must not keep the status from the caller. Keep
+  it below the timeout you put on the whole call: otherwise that one fires first and you see
+  your own timeout instead of the status you were already sent.
 - The body is read as text and parsed here, so the `Errors` contract is understood under any
   `Content-Type` — a proxy that rewrites the header does not cost the codes.
 - `error.status()` is an `HttpStatusCode`; `error.httpStatus(fallback)` gives an `HttpStatus`

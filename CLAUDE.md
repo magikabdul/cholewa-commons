@@ -99,9 +99,15 @@ snippet).
     `Content-Type`, and a proxy that rewrites the header would cost exactly the code the
     helper exists to deliver. Parsing by hand also tells the contract with no messages
     (`{"errors":[]}`, nothing to warn about) from a foreign body (no `errors` key, one WARN);
-  - the wait for the body is **bounded** (`DEFAULT_BODY_TIMEOUT`, 5 s): headers followed by a
+  - the wait for the body is **bounded** (`DEFAULT_BODY_TIMEOUT`, 2 s): headers followed by a
     stalled body is the shape of the 2026-09-26 outage, and without the bound the status
-    would never reach the caller;
+    would never reach the caller. It has to stay **below the caller's own call timeout**
+    (`amx-service` gives its `database-service` call 5 s, counted from the start of the
+    request) — the same relation as `max-validation-time` to `max-acquire-time` in the pool;
+  - the messages are bound **one by one into a `LinkedHashSet`**: bound as a whole,
+    `Errors.errors` comes back from Jackson as a `HashSet` and the order of the body is gone
+    before anything can preserve it. The order test goes through `read` with six messages —
+    a test feeding the record constructor a `LinkedHashSet` proves nothing about the wire;
   - `DownstreamError` drops null elements and wraps the messages unmodifiable in a
     `LinkedHashSet` — `Set.copyOf` throws on a null and iterates in an order that changes
     with every JVM start;

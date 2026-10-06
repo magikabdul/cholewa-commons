@@ -14,6 +14,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
@@ -30,8 +31,13 @@ import java.util.Set;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class DownstreamErrors {
 
-    /** How long {@link #read(ClientResponse)} waits for the body before answering with the status alone. */
-    public static final Duration DEFAULT_BODY_TIMEOUT = Duration.ofSeconds(5);
+    /**
+     * How long {@link #read(ClientResponse)} waits for the body before answering with the status
+     * alone. Short on purpose: it has to run out before the timeout the caller puts on the whole
+     * call (5 s is common), or that one fires first and the caller sees its own timeout instead of
+     * the status it was already sent.
+     */
+    public static final Duration DEFAULT_BODY_TIMEOUT = Duration.ofSeconds(2);
 
     private static final String ERRORS_FIELD = "errors";
 
@@ -84,8 +90,22 @@ public final class DownstreamErrors {
             log.warn("Error body of a downstream response ({}) is not the Errors contract", status.value());
             return Set.of();
         }
-        final Set<ErrorMessage> messages = MAPPER.treeToValue(root, Errors.class).getErrors();
+        final JsonNode errors = root.get(ERRORS_FIELD);
 
-        return messages == null ? Set.of() : messages;
+        if (errors.isNull()) {
+            return Set.of();
+        }
+        if (!errors.isArray()) {
+            throw new IllegalStateException("errors is not an array");
+        }
+        //element by element into a LinkedHashSet: bound as a whole, Errors.errors comes back as a
+        //HashSet and the order the downstream service gave its messages is gone
+        final Set<ErrorMessage> messages = new LinkedHashSet<>();
+        for (final JsonNode error : errors) {
+            if (!error.isNull()) {
+                messages.add(MAPPER.treeToValue(error, ErrorMessage.class));
+            }
+        }
+        return messages;
     }
 }
