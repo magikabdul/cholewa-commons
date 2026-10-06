@@ -27,7 +27,9 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
   (an `AbstractErrorWebExceptionHandler`, `@Order(-2)`) renders every unhandled
   exception as an `Errors` JSON body via a pluggable `ExceptionProcessor` mechanism.
 - `error/model/` — the JSON error contract shared by all services: `Errors`,
-  `ErrorMessage`, `UniqueError`, `ErrorId`, plus `NotImplementedException`.
+  `ErrorMessage`, `UniqueError`, `ErrorId`, plus `NotImplementedException`; and
+  `DownstreamError`, what `DownstreamErrors.read` returns for an error answered by another
+  service (HAS-174).
 - `database/` — `R2dbcConnectionFactoryAutoConfiguration` and `DatabaseProperties`: a
   pooled PostgreSQL `ConnectionFactory` built from the `database.*` property group, so a
   database-backed service carries no `DbConfig` of its own (HAS-146).
@@ -55,7 +57,23 @@ snippet).
   (custom wins on duplicate key).
 - Built-in registrations include a `ResponseStatusException` tier — unmatched routes
   (404), unsupported methods (405) etc. keep their own status instead of becoming 500 —
-  and `WebClientResponseExceptionProcessor` propagates the downstream HTTP status.
+  and `WebClientResponseExceptionProcessor` propagates the downstream HTTP status and, since
+  1.7.0 (HAS-174), the **causes the downstream service named**: its own message stays first
+  and unchanged, then every downstream message **that carries a code**, as `message` + `code`
+  and **without `details`**. Without this a code died at the first hop — the reason the
+  review of HAS-174 asked for it. The filter is the point, do not loosen it: `details` is by
+  convention the raw exception text (`DefaultExceptionProcessor` puts the driver message
+  there), and relaying it would carry a downstream 500's SQL to a caller two hops away, from
+  services the gateway deliberately does not route; and the processor cannot tell an own
+  service from an external system that happens to answer with an `errors` array, while a
+  code is something a service chose to publish. A body that is not the contract (a Shelly
+  device, Spring's default error) adds nothing and, on this path, logs nothing:
+  `DownstreamErrors.messagesOf(String)` is silent by design, because the processor already
+  logs the downstream status and a WARN per device error would be noise. **No org consumer
+  is affected today** (checked 2026-10-06): every client in boiler-, water-, heating-,
+  presence- and amx-service maps its errors to an exception of its own, so no
+  `WebClientResponseException` reaches the global handler; the relay starts working for the
+  first service that uses a plain `retrieve()`.
 - **Database integrity tier** (HAS-137, HAS-150): `org.springframework.dao.DuplicateKeyException`
   → **409** `Duplicate Key` since 1.4.0 (400 before — a broken unique is a conflict with the
   current state, not a malformed request), the parent `DataIntegrityViolationException` → 400
@@ -72,6 +90,59 @@ snippet).
   deliberately carry only cause messages, never stack traces or method signatures.
 - Error responses are client-facing in **public repos' services** — keep messages free
   of internals when touching processors.
+- **`ErrorMessage.code` is additive and must stay so** (HAS-174, 1.7.0): `NON_EMPTY`, so no
+  existing body gains a key (bar the 501 of `NotImplementedException`, which now names its
+  `UniqueError`); the two-argument constructor of the earlier releases is kept
+  by hand next to Lombok's all-args one, because a consumer compiled against it would
+  otherwise fail with `NoSuchMethodError`. The code is the **name** of an `ErrorId` constant
+  (`ErrorId.codeOf(...)`), never the description — a description gets reworded, and callers
+  branch on the code. `codeOf` is a **static** interface method on purpose: a default
+  `getCode()` would be inherited and clash with any implementation outside the org that
+  already has a `getCode()` of another type (an `int` code is the most common thing an error
+  enum carries); a static one is not inherited. The name of a constant becomes wire contract
+  the moment a caller branches on it — nothing in this library can pin that, the service
+  owning the enum has to.
+  The field also joins Lombok's `equals`/`hashCode`/`toString`: `toString()` gains
+  `code=null`, and a relayed message with a code no longer de-duplicates against the same
+  message built locally without one. Of the built-in processors only `NotImplementedExceptionProcessor`
+  sets one; the others have no `ErrorId` behind them.
+- **`DownstreamErrors.read` never loses the status and never fails**, whatever the body
+  does: none, HTML, JSON of another shape, `"errors":[null]`, a body that breaks off, a body
+  that never ends. It logs the kind of failure only — a parser can quote the body. What the
+  review of the first version added, each with a test:
+  - the body is read **as text and parsed with the helper's own `JsonMapper`**, not through
+    the application's codecs: `bodyToMono(Errors.class)` refuses a JSON body under another
+    `Content-Type`, and a proxy that rewrites the header would cost exactly the code the
+    helper exists to deliver. Parsing by hand also tells the contract with no messages
+    (`{"errors":[]}`, nothing to warn about) from a foreign body (no `errors` key, one WARN);
+  - the wait for the body is **bounded** (`DEFAULT_BODY_TIMEOUT`, 2 s): headers followed by a
+    stalled body is the shape of the 2026-09-26 outage, and without the bound the status
+    would never reach the caller. It has to stay **below the caller's own call timeout**
+    (`amx-service` gives its `database-service` call 5 s, counted from the start of the
+    request) — the same relation as `max-validation-time` to `max-acquire-time` in the pool;
+  - the messages are bound **one by one into a `LinkedHashSet`**: bound as a whole,
+    `Errors.errors` comes back from Jackson as a `HashSet` and the order of the body is gone
+    before anything can preserve it. The order test goes through `read` with six messages —
+    a test feeding the record constructor a `LinkedHashSet` proves nothing about the wire;
+  - `DownstreamError` drops null elements and wraps the messages unmodifiable in a
+    `LinkedHashSet` — `Set.copyOf` throws on a null and iterates in an order that changes
+    with every JVM start;
+  - `httpStatus(fallback)` exists because every call exception in the services takes an
+    `HttpStatus`, and `HttpStatus.valueOf` throws for a status without a constant;
+  - an element of `errors` counts only when it **has a `message`**, and one unreadable
+    element does not cost the others: `errors` is a common name, and Spring's body for a
+    failed binding has an array under it whose objects carry a `code` (`NotNull`) and no
+    `message` — read as they are, `hasCode("NotNull")` would match a code no `ErrorId` issued.
+    For the same reason a `code` counts only as **text**: the mapper coerces scalars, so an
+    external API's `"code": 32` would become `"32"` and pass the relay filter of the built-in
+    processor. Skipped elements are counted and reported in **one WARN on the `read` path**
+    (the number, never the content) — otherwise a downstream service that changes the shape
+    of its messages loses every code here without a trace.
+- **`Errors.addError` copies the set every time** (fixed here): the set an `Errors` is built
+  with is usually one that cannot be added to — `Collections.singleton` in every processor —
+  and the old code called `add` on it. It is the generalised `DeviceDatabaseClient.mapErrorToException` of
+  `amx-service`, which decoded the body by hand since HAS-150. The point of `hasCode`: a
+  routing 404 and "no such record" are both a 404, and only a code tells them apart.
 - `logError` in the handler is intentionally suppressed; logging happens in the
   processors instead (HAS-132): every processor logs the handled exception
   (`Handled [<class>]: <message>`) — `warn` for 4xx responses, `error` for 5xx

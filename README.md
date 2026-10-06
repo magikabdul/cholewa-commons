@@ -37,7 +37,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.6.0</version>
+    <version>1.7.0</version>
 </dependency>
 ```
 
@@ -81,6 +81,34 @@ GlobalErrorExceptionHandler globalErrorExceptionHandler(
 A custom processor implements `ExceptionProcessor` and maps an exception to an
 `Errors` object (HTTP status + list of `ErrorMessage`).
 
+An `ErrorMessage` has a `message`, optional `details` and — from 1.7.0 — an optional
+`code`: a stable, machine-readable name of the cause, so that a caller can tell errors apart
+without parsing the message. It is left out of the JSON unless a processor sets it, so existing
+error bodies do not change — with one exception: the `501` answered for a
+`NotImplementedException` now carries `"code": "NOT_IMPLEMENTED"`. The usual value is the name of an `ErrorId`
+constant:
+
+```java
+public enum WaterError implements ErrorId {
+    NOT_FOUND_SENSOR("No such sensor");
+    // getDescription() ...
+}
+
+ErrorMessage.builder()
+    .message(NOT_FOUND_SENSOR.getDescription())
+    .details(throwable.getMessage())
+    .code(ErrorId.codeOf(NOT_FOUND_SENSOR))  // "NOT_FOUND_SENSOR"
+    .build();
+```
+
+Once a caller branches on a code, the name of that constant is part of the wire contract:
+renaming it compiles and passes every test of its own service, and silently changes what the
+caller does. Pin the names callers rely on with a test.
+
+Two side effects of the new field for code that never sets it: `toString()` of an
+`ErrorMessage` now ends with `code=null`, and two messages that differ only in their code are
+not equal, so a `Set` keeps both.
+
 Processor selection is hierarchy-aware: an exception matches the processor registered
 for its exact class or, failing that, for its most specific registered supertype (e.g.
 `MissingRequestValueException` is handled by the `ServerWebInputException` processor).
@@ -101,6 +129,58 @@ Every built-in processor logs the exception it handles with a uniform
 for 5xx (processors with a dynamic status pick the level from the resolved status).
 Only the default processor logs the stack trace. Custom processors registered via
 `withCustomErrorProcessor` are responsible for their own logging.
+
+### Reading an error of another service
+
+`Errors.httpStatus` is not part of the JSON, so a decoded error body never knows its own
+status. `DownstreamErrors.read` (from 1.7.0) takes it from the response and returns it
+together with the messages:
+
+```java
+webClient.get().uri(...)
+    .retrieve()
+    .onStatus(HttpStatusCode::isError, response -> DownstreamErrors.read(response)
+        .map(error -> error.status().value() == 404 && error.hasCode("NOT_FOUND_SENSOR")
+            ? new SensorNotFoundException()
+            : new SensorCallException(error.httpStatus(HttpStatus.BAD_GATEWAY), error.errors())))
+    .bodyToMono(Sensor.class);
+```
+
+- The status always survives, and the returned `Mono` never fails. A missing body, a proxy's
+  HTML page, JSON of another shape, a connection lost half way through the body — each gives
+  the status with an empty set of messages. A body that is not the contract leaves one `WARN`
+  line naming only the kind of failure; a missing body, or the contract with no messages,
+  leaves none.
+- The wait for the body is bounded: 2 s by default, or `read(response, timeout)`. The headers
+  have arrived by then, and a body that stalls must not keep the status from the caller. Keep
+  it below the timeout you put on the whole call: otherwise that one fires first and you see
+  your own timeout instead of the status you were already sent.
+- The body is read as text and parsed here, so the `Errors` contract is understood under any
+  `Content-Type` — a proxy that rewrites the header does not cost the codes.
+- `error.status()` is an `HttpStatusCode`; `error.httpStatus(fallback)` gives an `HttpStatus`
+  for the signatures that take one, with the fallback for a status Spring has no constant
+  for (a proxy's 520) instead of an exception.
+- `error.errors()` is unmodifiable and keeps the order of the body. Copy it before adding to
+  it.
+- Only elements with a textual `message` count as messages, and only a textual `code` is a
+  code. `errors` is a common name — Spring's own body for a failed binding has an array under
+  it too, and many external APIs answer with numeric codes — so an element of another shape
+  is skipped, and a code that is not text is dropped, rather than passed on as if a service
+  of yours had issued it. One element that cannot be read does not cost the others; skipped
+  elements leave one `WARN` line with their number.
+- `hasCode` is what tells "the thing you asked for does not exist" from "this path does not
+  exist": both are a 404, only the first carries the code. A service on a release before
+  1.7.0 sends no codes, so `hasCode` is `false` for all of its errors.
+
+A service that does none of this — a plain `retrieve()` whose `WebClientResponseException`
+reaches the global handler — still passes the named causes on. From 1.7.0 the built-in
+processor answers with its own message first (`404 Not Found from GET …`, as before) followed
+by the downstream messages **that carry a code**, as `message` + `code` and without their
+`details`. So a code survives every hop without any code in between, while raw exception
+text — which is what `details` usually holds — and messages of anything that merely answers
+with an `errors` array stay where they were. A downstream that sends no codes is answered
+exactly as before. `DownstreamErrors.messagesOf(String)` is the same parsing for a body you
+already hold.
 
 ### R2DBC connection factory
 
