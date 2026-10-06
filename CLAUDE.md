@@ -27,7 +27,9 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
   (an `AbstractErrorWebExceptionHandler`, `@Order(-2)`) renders every unhandled
   exception as an `Errors` JSON body via a pluggable `ExceptionProcessor` mechanism.
 - `error/model/` — the JSON error contract shared by all services: `Errors`,
-  `ErrorMessage`, `UniqueError`, `ErrorId`, plus `NotImplementedException`.
+  `ErrorMessage`, `UniqueError`, `ErrorId`, plus `NotImplementedException`; and
+  `DownstreamError`, what `DownstreamErrors.read` returns for an error answered by another
+  service (HAS-174).
 - `database/` — `R2dbcConnectionFactoryAutoConfiguration` and `DatabaseProperties`: a
   pooled PostgreSQL `ConnectionFactory` built from the `database.*` property group, so a
   database-backed service carries no `DbConfig` of its own (HAS-146).
@@ -72,6 +74,20 @@ snippet).
   deliberately carry only cause messages, never stack traces or method signatures.
 - Error responses are client-facing in **public repos' services** — keep messages free
   of internals when touching processors.
+- **`ErrorMessage.code` is additive and must stay so** (HAS-174, 1.7.0): `NON_EMPTY`, so no
+  existing body gains a key (bar the 501 of `NotImplementedException`, which now names its
+  `UniqueError`); the two-argument constructor of the earlier releases is kept
+  by hand next to Lombok's all-args one, because a consumer compiled against it would
+  otherwise fail with `NoSuchMethodError`. The code is the **name** of an `ErrorId` constant
+  (`ErrorId.getCode()`), never the description — a description gets reworded, and callers
+  branch on the code. Of the built-in processors only `NotImplementedExceptionProcessor`
+  sets one; the others have no `ErrorId` behind them.
+- **`DownstreamErrors.read` never loses the status**, whatever the body does: none, HTML,
+  JSON of another shape (Spring's default error body decodes to an `Errors` with no
+  `errors`), a body that breaks off. It logs the kind of failure only — a decoding error can
+  quote the body. It is the generalised `DeviceDatabaseClient.mapErrorToException` of
+  `amx-service`, which decoded the body by hand since HAS-150. The point of `hasCode`: a
+  routing 404 and "no such record" are both a 404, and only a code tells them apart.
 - `logError` in the handler is intentionally suppressed; logging happens in the
   processors instead (HAS-132): every processor logs the handled exception
   (`Handled [<class>]: <message>`) — `warn` for 4xx responses, `error` for 5xx

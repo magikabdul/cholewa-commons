@@ -37,7 +37,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.6.0</version>
+    <version>1.7.0</version>
 </dependency>
 ```
 
@@ -81,6 +81,26 @@ GlobalErrorExceptionHandler globalErrorExceptionHandler(
 A custom processor implements `ExceptionProcessor` and maps an exception to an
 `Errors` object (HTTP status + list of `ErrorMessage`).
 
+An `ErrorMessage` has a `message`, optional `details` and — from 1.7.0 — an optional
+`code`: a stable, machine-readable name of the cause, so that a caller can tell errors apart
+without parsing the message. It is left out of the JSON unless a processor sets it, so existing
+error bodies do not change — with one exception: the `501` answered for a
+`NotImplementedException` now carries `"code": "NOT_IMPLEMENTED"`. The usual value is the name of an `ErrorId`
+constant:
+
+```java
+public enum WaterError implements ErrorId {
+    NOT_FOUND_SENSOR("No such sensor");
+    // getDescription() ...
+}
+
+ErrorMessage.builder()
+    .message(NOT_FOUND_SENSOR.getDescription())
+    .details(throwable.getMessage())
+    .code(NOT_FOUND_SENSOR.getCode())        // "NOT_FOUND_SENSOR"
+    .build();
+```
+
 Processor selection is hierarchy-aware: an exception matches the processor registered
 for its exact class or, failing that, for its most specific registered supertype (e.g.
 `MissingRequestValueException` is handled by the `ServerWebInputException` processor).
@@ -101,6 +121,30 @@ Every built-in processor logs the exception it handles with a uniform
 for 5xx (processors with a dynamic status pick the level from the resolved status).
 Only the default processor logs the stack trace. Custom processors registered via
 `withCustomErrorProcessor` are responsible for their own logging.
+
+### Reading an error of another service
+
+`Errors.httpStatus` is not part of the JSON, so a decoded error body never knows its own
+status. `DownstreamErrors.read` (from 1.7.0) takes it from the response and returns it
+together with the messages:
+
+```java
+webClient.get().uri(...)
+    .retrieve()
+    .onStatus(HttpStatusCode::isError, response -> DownstreamErrors.read(response)
+        .map(error -> error.status().value() == 404 && error.hasCode("NOT_FOUND_SENSOR")
+            ? new SensorNotFoundException()
+            : new SensorCallException(error.status(), error.errors())))
+    .bodyToMono(Sensor.class);
+```
+
+- The status always survives. A missing body, a proxy's HTML page, JSON of another shape, a
+  connection lost half way through the body — each gives the status with an empty set of
+  messages (and, except for the missing body, one `WARN` line naming only the kind of
+  failure).
+- `hasCode` is what tells "the thing you asked for does not exist" from "this path does not
+  exist": both are a 404, only the first carries the code. A service on a release before
+  1.7.0 sends no codes, so `hasCode` is `false` for all of its errors.
 
 ### R2DBC connection factory
 

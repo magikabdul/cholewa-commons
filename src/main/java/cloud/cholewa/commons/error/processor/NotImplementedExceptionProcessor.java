@@ -22,6 +22,7 @@ public class NotImplementedExceptionProcessor implements ExceptionProcessor {
                 ErrorMessage.builder()
                     .message("Not implemented yet")
                     .details(NOT_IMPLEMENTED.getDescription())
+                    .code(NOT_IMPLEMENTED.getCode())
                     .build()
             ))
             .build();
