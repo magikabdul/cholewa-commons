@@ -5,14 +5,14 @@ account**, not the `smart-home-automation-system` org — it is also used by ser
 outside that project, so treat every public-API change as affecting unknown external
 consumers, not just the org ones. Published to GitHub Packages
 (`maven.pkg.github.com/magikabdul/cholewa-commons`, pom server id `github-prv`).
-Java 21, Spring Boot 4.1.0 (`spring-boot-starter-parent`), Maven.
+Java 21, Spring Boot 4.1.1 (`spring-boot-starter-parent`), Maven.
 
-Org consumers, with the version each is on today (2026-08-13): `boiler-service`,
-`database-service`, `heating-service` and `water-service` on **1.2.0**; `ai-service` and
-`notification-service` on **1.1.0**; `amx-service` and `shelly-cloud-service` on 0.2.1 and
-`api-gateway-service` on 0.1.2 — those three stay on the old line until their own Java 21
-migrations, because 1.0.x is a breaking one (Java 21 bytecode, Jackson 3). This list drifts:
-the authoritative answer is the `cholewa-commons.version` property in each consumer's pom.
+Org consumers, with the version each is on today (2026-10-05): `amx-service`,
+`api-gateway-service`, `database-service`, `heating-service`, `notification-service`,
+`presence-service` and `water-service` on **1.5.1**; `shelly-cloud-service` on 1.3.1,
+`boiler-service` on 1.2.0 and `ai-service` on 1.1.0. Every org consumer is on the 1.x line.
+This list drifts: the authoritative answer is the `cholewa-commons.version` property in each
+consumer's pom.
 
 Org-wide conventions and working rules (PR flow, branch naming `feature/HAS-<n>`,
 "user writes library code, Claude reviews", public-repo hygiene) live in the workspace
@@ -31,13 +31,18 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
 - `database/` — `R2dbcConnectionFactoryAutoConfiguration` and `DatabaseProperties`: a
   pooled PostgreSQL `ConnectionFactory` built from the `database.*` property group, so a
   database-backed service carries no `DbConfig` of its own (HAS-146).
+- `validation/` — `ValidationMessagesAutoConfiguration`: Bean Validation messages always
+  from the root bundle — English for the built-in constraints — whatever the locale of the
+  JVM or of the request (HAS-180).
 - `info/` — `InfoController`: `GET /info` with app name, version and git commit
   (requires `application.title`/`application.version` properties and `GitProperties`
   in the consumer).
 
-The only auto-configuration is `R2dbcConnectionFactoryAutoConfiguration` (registered in
-`META-INF/spring/…AutoConfiguration.imports`, guarded by `@ConditionalOnClass` on the R2DBC
-types and `@ConditionalOnProperty` on `database.host`). Everything else is opt-in:
+There are two auto-configurations, both registered in
+`META-INF/spring/…AutoConfiguration.imports`: `R2dbcConnectionFactoryAutoConfiguration`
+(guarded by `@ConditionalOnClass` on the R2DBC types and `@ConditionalOnProperty` on
+`database.host`) and `ValidationMessagesAutoConfiguration` (on by default, see below).
+Everything else is opt-in:
 consumers register `GlobalErrorExceptionHandler` as a bean themselves (see README for the
 snippet).
 
@@ -135,6 +140,50 @@ snippet).
   library release. Note that the `r2dbc_pool_*` metrics are tagged with the **Spring bean
   name** (`connectionFactory`) by `ConnectionPoolMetricsAutoConfiguration`, not with
   `ConnectionPoolConfiguration.name(...)`, which only feeds the JMX object name.
+
+## Validation messages — why it is built the way it is
+
+- **Active by default, for every consumer.** `spring-boot-starter-validation` is a compile
+  dependency of this library, so every consumer has Bean Validation whether it declares the
+  starter or not. For a consumer outside the org on a non-English locale, 1.6.0 changes the
+  wording of its validation errors — that is the point, and
+  `cholewa.validation.english-messages: false` is the way back. The key carries the library's
+  prefix (unlike the older `database.*` group) so that it cannot be mistaken for a Spring
+  Boot key or collide with a consumer's own `validation.*` group. The property has no `@ConfigurationProperties` class behind it, so
+  its metadata is hand-written in `META-INF/additional-spring-configuration-metadata.json`.
+- **It has to be a `ValidationConfigurationCustomizer`**, not a `MessageInterpolator` bean:
+  Spring installs its own locale-aware interpolator and runs the customizers after it.
+- **The interpolator it wraps comes from Boot's `MessageInterpolatorFactory`**, built with the
+  application context — not from `configuration.getDefaultMessageInterpolator()`. The first
+  version used the latter and the review caught what that drops: Boot's
+  `MessageSourceMessageInterpolator` (a `{key}` defined in `messages.properties` would have
+  come out as the literal key) and the fallback to parameter-only interpolation for a
+  consumer without an Expression Language implementation (its context would not start).
+- **`Locale.ROOT`, not `Locale.ENGLISH`.** A bundle lookup for `en` that finds no `_en` file
+  falls back to the JVM default locale *before* the root bundle, so a consumer with
+  `ValidationMessages.properties` and `ValidationMessages_pl.properties` would still get
+  Polish on a Polish machine. Hibernate's own messages escape that only because it ships an
+  empty `ValidationMessages_en.properties`. Asking for the root has no detour. Two tests pin
+  it with bundles in `src/test/resources` that have a `_pl` file and deliberately no `_en`;
+  both fail on `Locale.ENGLISH`. Two edges of the choice, both documented in the README and
+  both outside the org (no org consumer has a `MessageSource` or `ValidationMessages` of its
+  own): a key that lives only in an `_en` file is not found any more, and a
+  `ReloadableResourceBundleMessageSource` with `fallbackToSystemLocale` left on looks the JVM
+  locale up before the root file whatever it is asked for.
+- **`@Order(HIGHEST_PRECEDENCE)`**: the customizers are applied in order and the last one to
+  set an interpolator wins, so running first leaves a consumer's own interpolator in place.
+- **The bean is named `cholewaEnglishValidationMessages` on purpose.** `database-service`
+  carried the same customizer as `englishValidationMessages` before it moved here; a second
+  definition of that name would fail its startup with a bean-definition override on the day
+  it upgrades. With different names the two coexist (the test pins it) until the consumer
+  deletes its own — which it should do in the same bump: its copy runs after this one and
+  puts back the version without the `MessageSource` and with `Locale.ENGLISH`.
+- **Not covered: `@ConfigurationProperties` validation.** Boot validates those with a
+  validator it builds itself (`ConfigurationPropertiesJsr303Validator`), which no customizer
+  reaches — a startup binding error still follows the JVM locale.
+- The tests make the JVM Polish and expect English, and one test asserts the opposite
+  without the auto-configuration — if that one ever fails, the JVM was English anyway and the
+  others prove nothing.
 
 ## Tests
 
