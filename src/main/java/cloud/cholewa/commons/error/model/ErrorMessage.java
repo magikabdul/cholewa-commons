@@ -9,7 +9,7 @@ import lombok.NoArgsConstructor;
 /**
  * {@code code} - a stable, machine-readable name of the cause, for a caller that has to tell errors
  * apart without parsing {@code message}; usually the name of an {@link ErrorId} constant
- * ({@link ErrorId#getCode()}). Optional: absent from the JSON unless set.
+ * ({@link ErrorId#codeOf(ErrorId)}). Optional: absent from the JSON unless set.
  */
 @Data
 @Builder

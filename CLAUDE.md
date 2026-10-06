@@ -79,13 +79,37 @@ snippet).
   `UniqueError`); the two-argument constructor of the earlier releases is kept
   by hand next to Lombok's all-args one, because a consumer compiled against it would
   otherwise fail with `NoSuchMethodError`. The code is the **name** of an `ErrorId` constant
-  (`ErrorId.getCode()`), never the description — a description gets reworded, and callers
-  branch on the code. Of the built-in processors only `NotImplementedExceptionProcessor`
+  (`ErrorId.codeOf(...)`), never the description — a description gets reworded, and callers
+  branch on the code. `codeOf` is a **static** interface method on purpose: a default
+  `getCode()` would be inherited and clash with any implementation outside the org that
+  already has a `getCode()` of another type (an `int` code is the most common thing an error
+  enum carries); a static one is not inherited. The name of a constant becomes wire contract
+  the moment a caller branches on it — nothing in this library can pin that, the service
+  owning the enum has to.
+  The field also joins Lombok's `equals`/`hashCode`/`toString`: `toString()` gains
+  `code=null`, and a relayed message with a code no longer de-duplicates against the same
+  message built locally without one. Of the built-in processors only `NotImplementedExceptionProcessor`
   sets one; the others have no `ErrorId` behind them.
-- **`DownstreamErrors.read` never loses the status**, whatever the body does: none, HTML,
-  JSON of another shape (Spring's default error body decodes to an `Errors` with no
-  `errors`), a body that breaks off. It logs the kind of failure only — a decoding error can
-  quote the body. It is the generalised `DeviceDatabaseClient.mapErrorToException` of
+- **`DownstreamErrors.read` never loses the status and never fails**, whatever the body
+  does: none, HTML, JSON of another shape, `"errors":[null]`, a body that breaks off, a body
+  that never ends. It logs the kind of failure only — a parser can quote the body. What the
+  review of the first version added, each with a test:
+  - the body is read **as text and parsed with the helper's own `JsonMapper`**, not through
+    the application's codecs: `bodyToMono(Errors.class)` refuses a JSON body under another
+    `Content-Type`, and a proxy that rewrites the header would cost exactly the code the
+    helper exists to deliver. Parsing by hand also tells the contract with no messages
+    (`{"errors":[]}`, nothing to warn about) from a foreign body (no `errors` key, one WARN);
+  - the wait for the body is **bounded** (`DEFAULT_BODY_TIMEOUT`, 5 s): headers followed by a
+    stalled body is the shape of the 2026-09-26 outage, and without the bound the status
+    would never reach the caller;
+  - `DownstreamError` drops null elements and wraps the messages unmodifiable in a
+    `LinkedHashSet` — `Set.copyOf` throws on a null and iterates in an order that changes
+    with every JVM start;
+  - `httpStatus(fallback)` exists because every call exception in the services takes an
+    `HttpStatus`, and `HttpStatus.valueOf` throws for a status without a constant.
+- **`Errors.addError` copies the set every time** (fixed here): the set an `Errors` is built
+  with is usually one that cannot be added to — `Collections.singleton` in every processor —
+  and the old code called `add` on it. It is the generalised `DeviceDatabaseClient.mapErrorToException` of
   `amx-service`, which decoded the body by hand since HAS-150. The point of `hasCode`: a
   routing 404 and "no such record" are both a 404, and only a code tells them apart.
 - `logError` in the handler is intentionally suppressed; logging happens in the

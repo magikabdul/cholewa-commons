@@ -97,9 +97,17 @@ public enum WaterError implements ErrorId {
 ErrorMessage.builder()
     .message(NOT_FOUND_SENSOR.getDescription())
     .details(throwable.getMessage())
-    .code(NOT_FOUND_SENSOR.getCode())        // "NOT_FOUND_SENSOR"
+    .code(ErrorId.codeOf(NOT_FOUND_SENSOR))  // "NOT_FOUND_SENSOR"
     .build();
 ```
+
+Once a caller branches on a code, the name of that constant is part of the wire contract:
+renaming it compiles and passes every test of its own service, and silently changes what the
+caller does. Pin the names callers rely on with a test.
+
+Two side effects of the new field for code that never sets it: `toString()` of an
+`ErrorMessage` now ends with `code=null`, and two messages that differ only in their code are
+not equal, so a `Set` keeps both.
 
 Processor selection is hierarchy-aware: an exception matches the processor registered
 for its exact class or, failing that, for its most specific registered supertype (e.g.
@@ -134,14 +142,24 @@ webClient.get().uri(...)
     .onStatus(HttpStatusCode::isError, response -> DownstreamErrors.read(response)
         .map(error -> error.status().value() == 404 && error.hasCode("NOT_FOUND_SENSOR")
             ? new SensorNotFoundException()
-            : new SensorCallException(error.status(), error.errors())))
+            : new SensorCallException(error.httpStatus(HttpStatus.BAD_GATEWAY), error.errors())))
     .bodyToMono(Sensor.class);
 ```
 
-- The status always survives. A missing body, a proxy's HTML page, JSON of another shape, a
-  connection lost half way through the body — each gives the status with an empty set of
-  messages (and, except for the missing body, one `WARN` line naming only the kind of
-  failure).
+- The status always survives, and the returned `Mono` never fails. A missing body, a proxy's
+  HTML page, JSON of another shape, a connection lost half way through the body — each gives
+  the status with an empty set of messages. A body that is not the contract leaves one `WARN`
+  line naming only the kind of failure; a missing body, or the contract with no messages,
+  leaves none.
+- The wait for the body is bounded: 5 s by default, or `read(response, timeout)`. The headers
+  have arrived by then, and a body that stalls must not keep the status from the caller.
+- The body is read as text and parsed here, so the `Errors` contract is understood under any
+  `Content-Type` — a proxy that rewrites the header does not cost the codes.
+- `error.status()` is an `HttpStatusCode`; `error.httpStatus(fallback)` gives an `HttpStatus`
+  for the signatures that take one, with the fallback for a status Spring has no constant
+  for (a proxy's 520) instead of an exception.
+- `error.errors()` is unmodifiable and keeps the order of the body. Copy it before adding to
+  it.
 - `hasCode` is what tells "the thing you asked for does not exist" from "this path does not
   exist": both are a 404, only the first carries the code. A service on a release before
   1.7.0 sends no codes, so `hasCode` is `false` for all of its errors.

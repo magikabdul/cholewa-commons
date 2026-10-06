@@ -1,5 +1,6 @@
 package cloud.cholewa.commons.error.processor;
 
+import cloud.cholewa.commons.error.model.ErrorId;
 import cloud.cholewa.commons.error.model.ErrorMessage;
 import cloud.cholewa.commons.error.model.Errors;
 import lombok.extern.slf4j.Slf4j;
@@ -22,7 +23,7 @@ public class NotImplementedExceptionProcessor implements ExceptionProcessor {
                 ErrorMessage.builder()
                     .message("Not implemented yet")
                     .details(NOT_IMPLEMENTED.getDescription())
-                    .code(NOT_IMPLEMENTED.getCode())
+                    .code(ErrorId.codeOf(NOT_IMPLEMENTED))
                     .build()
             ))
             .build();

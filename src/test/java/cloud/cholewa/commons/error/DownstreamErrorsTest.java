@@ -1,9 +1,16 @@
 package cloud.cholewa.commons.error;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import cloud.cholewa.commons.error.model.DownstreamError;
 import cloud.cholewa.commons.error.model.ErrorId;
 import cloud.cholewa.commons.error.model.ErrorMessage;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
 import org.springframework.http.HttpStatus;
@@ -15,19 +22,35 @@ import reactor.test.StepVerifier;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DownstreamErrorsTest {
 
+    private static final String WITH_CODE = """
+        {"errors":[{"message":"Device configuration not found","details":"point 48","code":"NOT_FOUND_DEVICE_CONFIGURATION"}]}
+        """;
+
+    private final ListAppender<ILoggingEvent> logged = new ListAppender<>();
+
+    @BeforeEach
+    void captureTheLog() {
+        logged.start();
+        ((Logger) LoggerFactory.getLogger(DownstreamErrors.class)).addAppender(logged);
+    }
+
+    @AfterEach
+    void releaseTheLog() {
+        ((Logger) LoggerFactory.getLogger(DownstreamErrors.class)).detachAppender(logged);
+    }
+
     @Test
     void should_read_status_and_messages_of_a_client_error() {
-        final ClientResponse response = json(HttpStatus.NOT_FOUND, """
-            {"errors":[{"message":"Device configuration not found","details":"point 48","code":"NOT_FOUND_DEVICE_CONFIGURATION"}]}
-            """);
-
-        DownstreamErrors.read(response)
+        DownstreamErrors.read(json(HttpStatus.NOT_FOUND, WITH_CODE))
             .as(StepVerifier::create)
             .assertNext(error -> {
                 assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -39,6 +62,8 @@ class DownstreamErrorsTest {
                 assertThat(error.hasCode("NOT_FOUND_DEVICE_CONFIGURATION")).isTrue();
             })
             .verifyComplete();
+
+        assertThat(logged.list).isEmpty();
     }
 
     @Test
@@ -87,14 +112,39 @@ class DownstreamErrorsTest {
             .verifyComplete();
     }
 
+    //a proxy on the way rewrote or dropped the Content-Type; the code in the body is the very
+    //thing that tells "no such record" from a routing 404, so it must not be lost with the header
+    @Test
+    void should_read_the_errors_contract_under_another_content_type() {
+        final ClientResponse plainText = ClientResponse.create(HttpStatus.NOT_FOUND)
+            .header("Content-Type", MediaType.TEXT_PLAIN_VALUE)
+            .body(WITH_CODE)
+            .build();
+        final ClientResponse noContentType = ClientResponse.create(HttpStatus.NOT_FOUND).body(WITH_CODE).build();
+
+        for (final ClientResponse response : new ClientResponse[]{plainText, noContentType}) {
+            DownstreamErrors.read(response)
+                .as(StepVerifier::create)
+                .assertNext(error -> assertThat(error.hasCode("NOT_FOUND_DEVICE_CONFIGURATION")).isTrue())
+                .verifyComplete();
+        }
+    }
+
     //Spring's default error body, for one: a routing 404 of a service that is up
     @Test
-    void should_keep_the_status_when_json_body_is_not_the_errors_contract() {
+    void should_keep_the_status_and_warn_when_json_body_is_not_the_errors_contract() {
         final ClientResponse response = json(HttpStatus.NOT_FOUND, """
             {"timestamp":"2026-10-06T08:00:00Z","path":"/home/device","status":404,"error":"Not Found"}
             """);
 
         expectStatusWithoutMessages(response, HttpStatus.NOT_FOUND);
+        assertThat(warnings()).containsExactly("Error body of a downstream response (404) is not the Errors contract");
+    }
+
+    @Test
+    void should_keep_the_status_when_json_is_not_an_object() {
+        expectStatusWithoutMessages(json(HttpStatus.BAD_GATEWAY, "[1,2,3]"), HttpStatus.BAD_GATEWAY);
+        assertThat(warnings()).hasSize(1);
     }
 
     @Test
@@ -105,6 +155,8 @@ class DownstreamErrorsTest {
             .build();
 
         expectStatusWithoutMessages(response, HttpStatus.BAD_GATEWAY);
+        //the kind of failure only: the body itself, which a parser may quote, stays out of the log
+        assertThat(warnings()).hasSize(1).allSatisfy(warning -> assertThat(warning).doesNotContain("Bad Gateway"));
     }
 
     @Test
@@ -114,27 +166,84 @@ class DownstreamErrorsTest {
     }
 
     @Test
-    void should_keep_the_status_when_there_is_no_body() {
-        expectStatusWithoutMessages(ClientResponse.create(HttpStatus.GATEWAY_TIMEOUT).build(),
-            HttpStatus.GATEWAY_TIMEOUT);
+    void should_keep_the_status_when_errors_is_of_another_type() {
+        expectStatusWithoutMessages(json(HttpStatus.INTERNAL_SERVER_ERROR, "{\"errors\":\"boom\"}"),
+            HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
     @Test
-    void should_keep_the_status_when_errors_is_empty() {
+    void should_keep_the_status_without_a_warning_when_there_is_no_body() {
+        expectStatusWithoutMessages(ClientResponse.create(HttpStatus.GATEWAY_TIMEOUT).build(),
+            HttpStatus.GATEWAY_TIMEOUT);
+        expectStatusWithoutMessages(json(HttpStatus.GATEWAY_TIMEOUT, "  "), HttpStatus.GATEWAY_TIMEOUT);
+
+        assertThat(logged.list).isEmpty();
+    }
+
+    //the contract with nothing to say is still the contract: status only, and nothing to warn about
+    @Test
+    void should_keep_the_status_without_a_warning_when_errors_is_empty_or_null() {
         expectStatusWithoutMessages(json(HttpStatus.CONFLICT, "{\"errors\":[]}"), HttpStatus.CONFLICT);
+        expectStatusWithoutMessages(json(HttpStatus.CONFLICT, "{\"errors\":null}"), HttpStatus.CONFLICT);
+
+        assertThat(logged.list).isEmpty();
+    }
+
+    //"errors":[null] decodes to a set holding null; the status must not be lost to it
+    @Test
+    void should_skip_null_messages() {
+        DownstreamErrors.read(json(HttpStatus.NOT_FOUND, "{\"errors\":[null,{\"message\":\"m\",\"code\":\"C\"}]}"))
+            .as(StepVerifier::create)
+            .assertNext(error -> {
+                assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND);
+                assertThat(error.errors()).extracting(ErrorMessage::getMessage).containsExactly("m");
+            })
+            .verifyComplete();
+
+        expectStatusWithoutMessages(json(HttpStatus.NOT_FOUND, "{\"errors\":[null]}"), HttpStatus.NOT_FOUND);
     }
 
     //the connection is lost while the body is still arriving
     @Test
     void should_keep_the_status_when_the_body_breaks_off() {
-        final DataBuffer start = DefaultDataBufferFactory.sharedInstance
-            .wrap("{\"errors\":[".getBytes(StandardCharsets.UTF_8));
         final ClientResponse response = ClientResponse.create(HttpStatus.INTERNAL_SERVER_ERROR)
             .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
-            .body(Flux.just(start).concatWith(Flux.error(new IOException("Connection reset"))))
+            .body(Flux.just(buffer("{\"errors\":[")).concatWith(Flux.error(new IOException("Connection reset"))))
             .build();
 
         expectStatusWithoutMessages(response, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    //the headers arrived and the body never ends - the shape of the 2026-09-26 outage. Without a
+    //bound the status would never reach the caller
+    @Test
+    void should_keep_the_status_when_the_body_stalls() {
+        final ClientResponse response = ClientResponse.create(HttpStatus.SERVICE_UNAVAILABLE)
+            .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+            .body(Flux.just(buffer("{\"errors\":[")).concatWith(Flux.never()))
+            .build();
+
+        StepVerifier.withVirtualTime(() -> DownstreamErrors.read(response))
+            .expectSubscription()
+            .expectNoEvent(DownstreamErrors.DEFAULT_BODY_TIMEOUT.minusMillis(1))
+            .thenAwait(Duration.ofMillis(2))
+            .assertNext(error -> {
+                assertThat(error.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+                assertThat(error.errors()).isEmpty();
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    void should_wait_for_the_body_no_longer_than_asked() {
+        final ClientResponse response = ClientResponse.create(HttpStatus.SERVICE_UNAVAILABLE)
+            .body(Flux.<DataBuffer>never())
+            .build();
+
+        StepVerifier.withVirtualTime(() -> DownstreamErrors.read(response, Duration.ofMillis(200)))
+            .thenAwait(Duration.ofMillis(201))
+            .assertNext(error -> assertThat(error.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE))
+            .verifyComplete();
     }
 
     //a status Spring has no constant for is still a status
@@ -142,8 +251,17 @@ class DownstreamErrorsTest {
     void should_keep_a_status_outside_the_known_ones() {
         DownstreamErrors.read(ClientResponse.create(HttpStatusCode.valueOf(599)).build())
             .as(StepVerifier::create)
-            .assertNext(error -> assertThat(error.status().value()).isEqualTo(599))
+            .assertNext(error -> {
+                assertThat(error.status().value()).isEqualTo(599);
+                assertThat(error.httpStatus(HttpStatus.BAD_GATEWAY)).isEqualTo(HttpStatus.BAD_GATEWAY);
+            })
             .verifyComplete();
+    }
+
+    @Test
+    void should_give_the_status_as_http_status_when_spring_knows_it() {
+        assertThat(new DownstreamError(HttpStatusCode.valueOf(404), Set.of()).httpStatus(HttpStatus.BAD_GATEWAY))
+            .isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test
@@ -164,7 +282,21 @@ class DownstreamErrorsTest {
         assertThat(new DownstreamError(HttpStatus.BAD_GATEWAY, null).errors()).isEmpty();
     }
 
-    private static void expectStatusWithoutMessages(final ClientResponse response, final HttpStatus status) {
+    //the order they were read in, the same on every run, and not for the caller to change in place
+    @Test
+    void should_keep_the_order_of_messages_and_refuse_changes() {
+        final Set<ErrorMessage> messages = new LinkedHashSet<>();
+        for (final String name : new String[]{"c", "a", "b", "e", "d"}) {
+            messages.add(ErrorMessage.builder().message(name).build());
+        }
+        final DownstreamError error = new DownstreamError(HttpStatus.BAD_GATEWAY, messages);
+
+        assertThat(error.errors()).extracting(ErrorMessage::getMessage).containsExactly("c", "a", "b", "e", "d");
+        assertThatThrownBy(() -> error.errors().add(ErrorMessage.builder().message("x").build()))
+            .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    private void expectStatusWithoutMessages(final ClientResponse response, final HttpStatus status) {
         DownstreamErrors.read(response)
             .as(StepVerifier::create)
             .assertNext(error -> {
@@ -172,6 +304,17 @@ class DownstreamErrorsTest {
                 assertThat(error.errors()).isEmpty();
             })
             .verifyComplete();
+    }
+
+    private java.util.List<String> warnings() {
+        return logged.list.stream()
+            .filter(event -> event.getLevel() == Level.WARN)
+            .map(ILoggingEvent::getFormattedMessage)
+            .toList();
+    }
+
+    private static DataBuffer buffer(final String text) {
+        return DefaultDataBufferFactory.sharedInstance.wrap(text.getBytes(StandardCharsets.UTF_8));
     }
 
     private static ClientResponse json(final HttpStatus status, final String body) {

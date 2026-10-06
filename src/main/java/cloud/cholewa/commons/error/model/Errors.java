@@ -8,7 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.http.HttpStatus;
 
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 @Data
@@ -24,10 +24,11 @@ public class Errors {
     private HttpStatus httpStatus;
 
     public Errors addError(final ErrorMessage errorMessage) {
-        if (this.errors == null) {
-            this.errors = new HashSet<>();
-        }
-        this.errors.add(errorMessage);
+        //a copy every time: the set this object was built with is often one that cannot be added
+        //to - Collections.singleton in the processors, the messages of a DownstreamError
+        final Set<ErrorMessage> extended = this.errors == null ? new LinkedHashSet<>() : new LinkedHashSet<>(this.errors);
+        extended.add(errorMessage);
+        this.errors = extended;
         return this;
     }
 }
