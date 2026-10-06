@@ -133,6 +133,11 @@ snippet).
     element does not cost the others: `errors` is a common name, and Spring's body for a
     failed binding has an array under it whose objects carry a `code` (`NotNull`) and no
     `message` — read as they are, `hasCode("NotNull")` would match a code no `ErrorId` issued.
+    For the same reason a `code` counts only as **text**: the mapper coerces scalars, so an
+    external API's `"code": 32` would become `"32"` and pass the relay filter of the built-in
+    processor. Skipped elements are counted and reported in **one WARN on the `read` path**
+    (the number, never the content) — otherwise a downstream service that changes the shape
+    of its messages loses every code here without a trace.
 - **`Errors.addError` copies the set every time** (fixed here): the set an `Errors` is built
   with is usually one that cannot be added to — `Collections.singleton` in every processor —
   and the old code called `add` on it. It is the generalised `DeviceDatabaseClient.mapErrorToException` of

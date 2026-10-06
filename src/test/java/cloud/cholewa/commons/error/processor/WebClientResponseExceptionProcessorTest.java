@@ -77,6 +77,17 @@ class WebClientResponseExceptionProcessorTest {
             .containsExactly(ErrorMessage.builder().message(downstream.getLocalizedMessage()).build());
     }
 
+    //a common shape of an external API: "errors" with a numeric code and a message
+    @Test
+    void should_not_relay_an_external_error_with_a_numeric_code() {
+        final WebClientResponseException downstream = downstream(401, "Unauthorized", """
+            {"errors":[{"code":32,"message":"Could not authenticate you"}]}
+            """);
+
+        assertThat(sut.apply(downstream).getErrors())
+            .containsExactly(ErrorMessage.builder().message(downstream.getLocalizedMessage()).build());
+    }
+
     @Test
     void should_answer_as_before_when_the_body_is_not_the_errors_contract() {
         for (final String body : new String[]{

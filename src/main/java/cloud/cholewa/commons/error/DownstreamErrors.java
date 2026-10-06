@@ -41,6 +41,8 @@ public final class DownstreamErrors {
     public static final Duration DEFAULT_BODY_TIMEOUT = Duration.ofSeconds(2);
 
     private static final String ERRORS_FIELD = "errors";
+    private static final String MESSAGE_FIELD = "message";
+    private static final String CODE_FIELD = "code";
 
     //its own mapper, not the application's codecs: the body is read as text and parsed here, so
     //that a JSON body under another Content-Type (a proxy that rewrote it) is still understood
@@ -87,30 +89,37 @@ public final class DownstreamErrors {
      */
     public static Set<ErrorMessage> messagesOf(final String body) {
         try {
-            final Set<ErrorMessage> messages = body == null ? null : parse(body);
+            final Parsed parsed = body == null ? null : parse(body);
 
-            return messages == null ? Set.of() : Collections.unmodifiableSet(messages);
+            return parsed == null ? Set.of() : Collections.unmodifiableSet(parsed.messages());
         } catch (final RuntimeException unreadable) {
             return Set.of();
         }
     }
 
     private static Set<ErrorMessage> messagesOf(final String body, final HttpStatusCode status) {
-        final Set<ErrorMessage> messages = parse(body);
+        final Parsed parsed = parse(body);
 
-        if (messages == null) {
+        if (parsed == null) {
             log.warn("Error body of a downstream response ({}) is not the Errors contract", status.value());
             return Set.of();
         }
-        return messages;
+        //the number only, never the elements. Without this line a downstream service that changes
+        //the shape of its messages would lose every code here without a trace: the caller would
+        //see a missing record turn into a missing route and no log pointing at the body
+        if (parsed.skipped() > 0) {
+            log.warn("Error body of a downstream response ({}): {} of its errors skipped, not the Errors contract",
+                status.value(), parsed.skipped());
+        }
+        return parsed.messages();
     }
 
     //null for valid JSON of another shape - Spring's default error body, for one; an exception
     //for anything that cannot be read. An Errors body with no messages is the contract all the
     //same: an empty set, and nothing to warn about
-    private static Set<ErrorMessage> parse(final String body) {
+    private static Parsed parse(final String body) {
         if (body.isBlank()) {
-            return Set.of();
+            return Parsed.NOTHING;
         }
         final JsonNode root = MAPPER.readTree(body);
 
@@ -120,7 +129,7 @@ public final class DownstreamErrors {
         final JsonNode errors = root.get(ERRORS_FIELD);
 
         if (errors.isNull()) {
-            return Set.of();
+            return Parsed.NOTHING;
         }
         if (!errors.isArray()) {
             throw new IllegalStateException("errors is not an array");
@@ -128,30 +137,46 @@ public final class DownstreamErrors {
         //element by element into a LinkedHashSet: bound as a whole, Errors.errors comes back as a
         //HashSet and the order the downstream service gave its messages is gone
         final Set<ErrorMessage> messages = new LinkedHashSet<>();
+        int skipped = 0;
         for (final JsonNode error : errors) {
             final ErrorMessage message = messageOf(error);
 
             if (message != null) {
                 messages.add(message);
+            } else if (!error.isNull()) {
+                skipped++;
             }
         }
-        return messages;
+        return new Parsed(messages, skipped);
     }
 
-    //An element is taken only when it has a message - every message of this contract has one.
-    //"errors" is a common name: Spring's own body for a failed binding has an array under it too,
-    //with a "code" (NotNull) and no "message", and taken as it is that would hand the caller a
-    //code no ErrorId ever issued. One element that cannot be read does not cost the others
+    //An element is taken only when it has a message, as text - every message of this contract
+    //has one. "errors" is a common name: Spring's own body for a failed binding has an array
+    //under it too, with a "code" (NotNull) and no "message", and taken as it is that would hand
+    //the caller a code no ErrorId ever issued. A code that is not text is not a code of this
+    //contract either - the mapper would turn an external API's "code": 32 into "32" - so it is
+    //dropped and the message kept. One element that cannot be read does not cost the others
     private static ErrorMessage messageOf(final JsonNode error) {
-        if (!error.isObject()) {
+        if (!error.isObject() || !error.path(MESSAGE_FIELD).isString()) {
             return null;
         }
         try {
             final ErrorMessage message = MAPPER.treeToValue(error, ErrorMessage.class);
 
-            return message.getMessage() == null || message.getMessage().isBlank() ? null : message;
+            if (message.getMessage().isBlank()) {
+                return null;
+            }
+            if (!error.path(CODE_FIELD).isString()) {
+                message.setCode(null);
+            }
+            return message;
         } catch (final RuntimeException unreadable) {
             return null;
         }
+    }
+
+    private record Parsed(Set<ErrorMessage> messages, int skipped) {
+
+        private static final Parsed NOTHING = new Parsed(Set.of(), 0);
     }
 }

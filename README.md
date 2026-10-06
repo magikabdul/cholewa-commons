@@ -162,10 +162,12 @@ webClient.get().uri(...)
   for (a proxy's 520) instead of an exception.
 - `error.errors()` is unmodifiable and keeps the order of the body. Copy it before adding to
   it.
-- Only elements with a `message` count as messages. `errors` is a common name — Spring's own
-  body for a failed binding has an array under it too — and an element of another shape is
-  skipped rather than read as an empty message with a foreign `code`. One element that
-  cannot be read does not cost the others.
+- Only elements with a textual `message` count as messages, and only a textual `code` is a
+  code. `errors` is a common name — Spring's own body for a failed binding has an array under
+  it too, and many external APIs answer with numeric codes — so an element of another shape
+  is skipped, and a code that is not text is dropped, rather than passed on as if a service
+  of yours had issued it. One element that cannot be read does not cost the others; skipped
+  elements leave one `WARN` line with their number.
 - `hasCode` is what tells "the thing you asked for does not exist" from "this path does not
   exist": both are a 404, only the first carries the code. A service on a release before
   1.7.0 sends no codes, so `hasCode` is `false` for all of its errors.

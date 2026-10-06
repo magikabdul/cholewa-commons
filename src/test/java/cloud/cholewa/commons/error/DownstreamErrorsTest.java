@@ -233,6 +233,31 @@ class DownstreamErrorsTest {
                 assertThat(error.hasCode("NotBlank")).isFalse();
             })
             .verifyComplete();
+
+        //a downstream service whose messages changed shape must not lose its codes without a trace
+        assertThat(warnings()).containsExactly(
+            "Error body of a downstream response (400): 5 of its errors skipped, not the Errors contract");
+    }
+
+    //an external API's numeric code is not a code of this contract: the mapper would turn 32 into
+    //"32", and the built-in processor passes on whatever carries a code
+    @Test
+    void should_drop_a_code_that_is_not_text_and_keep_the_message() {
+        final ClientResponse response = json(HttpStatus.UNAUTHORIZED, """
+            {"errors":[{"code":32,"message":"Could not authenticate you"},{"code":true,"message":"flagged"}]}
+            """);
+
+        DownstreamErrors.read(response)
+            .as(StepVerifier::create)
+            .assertNext(error -> {
+                assertThat(error.errors()).extracting(ErrorMessage::getMessage)
+                    .containsExactly("Could not authenticate you", "flagged");
+                assertThat(error.errors()).extracting(ErrorMessage::getCode).containsOnlyNulls();
+                assertThat(error.hasCode("32")).isFalse();
+            })
+            .verifyComplete();
+
+        assertThat(logged.list).isEmpty();
     }
 
     //one element that cannot be read must not cost the code of the one next to it
@@ -249,6 +274,9 @@ class DownstreamErrorsTest {
                 assertThat(error.hasCode("X")).isTrue();
             })
             .verifyComplete();
+
+        assertThat(warnings()).containsExactly(
+            "Error body of a downstream response (404): 1 of its errors skipped, not the Errors contract");
     }
 
     @Test
