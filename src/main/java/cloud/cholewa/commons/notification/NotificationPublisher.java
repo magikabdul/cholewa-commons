@@ -24,6 +24,9 @@ import java.util.concurrent.TimeoutException;
  * Every other outcome is an error of the {@code Mono}: nothing is retried and nothing is swallowed
  * here, both are the caller's to decide.
  * <p>
+ * Whatever is chained after a publish runs on {@code Schedulers.boundedElastic()}, never on a thread
+ * of the broker connection.
+ * <p>
  * The {@link RabbitOperations} have to publish with correlated confirms, publisher returns and the
  * mandatory flag. Without the confirms every publish ends in the timeout; without the other two a
  * message that matches no queue is reported as delivered.
@@ -106,6 +109,15 @@ public class NotificationPublisher {
                 .timeout(confirmTimeout)
                 .onErrorMap(TimeoutException.class, timeout -> new NotificationPublishException(
                     "Notification not confirmed by the broker within " + confirmTimeout, timeout))
+                //Spring AMQP completes the future on the thread that reads the frames of the
+                //connection, inside the lock of the channel. Whatever the caller chains after a
+                //publish would run there and, while it runs, hold up everything else on the
+                //connection: the heartbeats and every other confirm. So the outcome - the timeout
+                //included, which arrives on a timer thread - is handed over first.
+                //boundedElastic and not parallel: nothing here blocks, but what follows is the
+                //caller's and unknown, and this is the scheduler on which blocking is allowed; the
+                //send ran on it already
+                .publishOn(Schedulers.boundedElastic())
                 .flatMap(confirm -> verifyDelivery(correlationData, confirm)))
             .doOnSuccess(unused -> log.info("Published {} notification ({}): {}", category, level, text));
     }

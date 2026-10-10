@@ -1,6 +1,7 @@
 package cloud.cholewa.commons.notification;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.AmqpApplicationContextClosedException;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -16,10 +17,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import reactor.test.StepVerifier;
+
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 //No test here opens a connection: the factory connects with the first publish, and nothing is published
@@ -138,6 +143,72 @@ class NotificationConnectionTest {
             });
     }
 
+    //destroy() of the factory alone only resets the connection, and the next publish would open a
+    //new one that nothing closes. Closed here means closed: the factory refuses, before any attempt
+    //to reach a broker
+    @Test
+    void should_refuse_to_connect_after_it_was_closed() {
+        final NotificationConnection connection = connection(SETTINGS, factory -> "pod");
+        final CachingConnectionFactory connectionFactory = connectionFactoryOf(connection);
+
+        connection.close();
+
+        assertThatThrownBy(connectionFactory::createConnection)
+            .isInstanceOf(AmqpApplicationContextClosedException.class);
+        connection.publisher("notification", "dev").publishAlert("Sensor is not reporting")
+            .as(StepVerifier::create)
+            .verifyError(AmqpApplicationContextClosedException.class);
+    }
+
+    //the same through Spring: the bean is closed with the context, by the close() Spring finds itself
+    @Test
+    void should_be_closed_for_good_with_the_application_context() {
+        final AtomicReference<NotificationConnection> closedWithTheContext = new AtomicReference<>();
+
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(RabbitAutoConfiguration.class))
+            .withUserConfiguration(SecondConnectionConfiguration.class)
+            .run(context -> closedWithTheContext.set(context.getBean(NotificationConnection.class)));
+
+        assertThatThrownBy(connectionFactoryOf(closedWithTheContext.get())::createConnection)
+            .isInstanceOf(AmqpApplicationContextClosedException.class);
+    }
+
+    @Test
+    void should_refuse_a_port_and_durations_the_client_would_misread() {
+        assertThatIllegalArgumentException()
+            .isThrownBy(() -> settings(0, null, null))
+            .withMessage("The broker port must be between 1 and 65535");
+        assertThatIllegalArgumentException()
+            .isThrownBy(() -> settings(65536, null, null))
+            .withMessage("The broker port must be between 1 and 65535");
+        //zero would mean no limit, and anything below a millisecond is cut down to it
+        assertThatIllegalArgumentException()
+            .isThrownBy(() -> settings(5672, Duration.ZERO, null))
+            .withMessage("The connection timeout must be at least a millisecond");
+        assertThatIllegalArgumentException()
+            .isThrownBy(() -> settings(5672, Duration.ofNanos(500), null))
+            .withMessage("The connection timeout must be at least a millisecond");
+        assertThatIllegalArgumentException()
+            .isThrownBy(() -> settings(5672, Duration.ofSeconds(-1), null))
+            .withMessage("The connection timeout must be at least a millisecond");
+        //half a second is cut down to zero, and zero asks the broker for no heartbeat at all
+        assertThatIllegalArgumentException()
+            .isThrownBy(() -> settings(5672, null, Duration.ofMillis(500)))
+            .withMessage("The requested heartbeat must be zero or at least a second");
+        assertThatIllegalArgumentException()
+            .isThrownBy(() -> settings(5672, null, Duration.ofSeconds(-5)))
+            .withMessage("The requested heartbeat must be zero or at least a second");
+    }
+
+    //zero is a setting of its own: the heartbeat switched off by whoever wrote it
+    @Test
+    void should_take_a_heartbeat_of_zero_as_switched_off() {
+        try (NotificationConnection connection = connection(settings(5672, null, Duration.ZERO), factory -> "pod")) {
+            assertThat(connectionFactoryOf(connection).getRabbitConnectionFactory().getRequestedHeartbeat()).isZero();
+        }
+    }
+
     @Test
     void should_refuse_settings_that_cannot_connect() {
         assertThatIllegalArgumentException()
@@ -159,6 +230,13 @@ class NotificationConnectionTest {
         assertThat(SETTINGS.toString())
             .contains("broker.test", "/notification")
             .doesNotContain("secret");
+    }
+
+    private static NotificationConnection.Settings settings(
+        final int port, final Duration connectionTimeout, final Duration requestedHeartbeat
+    ) {
+        return new NotificationConnection.Settings(
+            "broker.test", port, "/notification", "notification", "secret", connectionTimeout, requestedHeartbeat);
     }
 
     private static NotificationConnection connection(

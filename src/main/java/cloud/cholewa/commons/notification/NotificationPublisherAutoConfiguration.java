@@ -4,6 +4,7 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitOperations;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -29,17 +30,38 @@ import reactor.core.publisher.Mono;
 public class NotificationPublisherAutoConfiguration {
 
     //The bean name is deliberately not "notificationPublisher": the services that carried a
-    //publisher of their own before it moved here call theirs that
+    //publisher of their own before it moved here call theirs that.
+    //No @ConditionalOnSingleCandidate(RabbitOperations.class): the publisher was switched on, and
+    //a condition that quietly leaves it out would move the failure to whoever injects it, with a
+    //message about a missing NotificationPublisher and no word about templates. The candidates are
+    //counted here instead and the failure says what to do
     @Bean
     @ConditionalOnMissingBean
     NotificationPublisher cholewaNotificationPublisher(
-        final RabbitOperations rabbitOperations,
+        final ObjectProvider<RabbitOperations> rabbitOperations,
         final NotificationProperties properties
     ) {
-        requireDeliveryFeedback(rabbitOperations);
+        final RabbitOperations operations = theOneOf(rabbitOperations);
+        requireDeliveryFeedback(operations);
 
         return new NotificationPublisher(
-            rabbitOperations, properties.exchange(), properties.env(), properties.confirmTimeout());
+            operations, properties.exchange(), properties.env(), properties.confirmTimeout());
+    }
+
+    static RabbitOperations theOneOf(final ObjectProvider<RabbitOperations> rabbitOperations) {
+        //the only bean of the type, or the primary one among several
+        final RabbitOperations operations = rabbitOperations.getIfUnique();
+
+        if (operations == null) {
+            final long candidates = rabbitOperations.stream().count();
+            throw new IllegalStateException(candidates == 0
+                ? "The notification publisher is switched on (cholewa.notification.enabled) but there is no"
+                    + " RabbitOperations bean to publish over - is spring.rabbitmq.* configured?"
+                : "The notification publisher is switched on (cholewa.notification.enabled) but there are "
+                    + candidates + " RabbitOperations beans and none is primary - mark one @Primary or"
+                    + " declare a NotificationPublisher bean over the one that leads to the notifications");
+        }
+        return operations;
     }
 
     //The three settings the publisher cannot do without are the application's, on its own connection
@@ -49,6 +71,10 @@ public class NotificationPublisherAutoConfiguration {
     static void requireDeliveryFeedback(final RabbitOperations rabbitOperations) {
         final ConnectionFactory connectionFactory = rabbitOperations.getConnectionFactory();
 
+        //a mocked template in a context test of a consumer, most likely
+        if (connectionFactory == null) {
+            throw misconfigured("a RabbitOperations with a connection factory, and this one has none");
+        }
         if (!connectionFactory.isPublisherConfirms()) {
             throw misconfigured("correlated publisher confirms (spring.rabbitmq.publisher-confirm-type: correlated)");
         }

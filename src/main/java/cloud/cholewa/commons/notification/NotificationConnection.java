@@ -6,6 +6,7 @@ import org.springframework.amqp.rabbit.connection.ConnectionNameStrategy;
 import org.springframework.amqp.rabbit.core.RabbitOperations;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.util.Assert;
 
 import java.time.Duration;
@@ -22,7 +23,10 @@ import java.time.Duration;
  * prefetch, observation). Declare this object as a bean, or the publisher it gives - never what
  * {@link #rabbitOperations()} returns.
  * <p>
- * Nothing is opened here: the connection is made by the first publish.
+ * Nothing is opened here: the connection is made by the first publish. {@link #close()} is final: a
+ * publish after it fails instead of opening a connection nothing would close.
+ * <p>
+ * Not covered: TLS and a list of broker addresses - one host and port, without encryption.
  */
 @Slf4j
 public final class NotificationConnection implements AutoCloseable {
@@ -32,10 +36,16 @@ public final class NotificationConnection implements AutoCloseable {
 
     private final CachingConnectionFactory connectionFactory;
     private final RabbitTemplate rabbitTemplate;
+    private final ApplicationContext applicationContext;
 
-    private NotificationConnection(final CachingConnectionFactory connectionFactory, final RabbitTemplate rabbitTemplate) {
+    private NotificationConnection(
+        final CachingConnectionFactory connectionFactory,
+        final RabbitTemplate rabbitTemplate,
+        final ApplicationContext applicationContext
+    ) {
         this.connectionFactory = connectionFactory;
         this.rabbitTemplate = rabbitTemplate;
+        this.applicationContext = applicationContext;
     }
 
     /**
@@ -56,6 +66,8 @@ public final class NotificationConnection implements AutoCloseable {
 
         final CachingConnectionFactory connectionFactory =
             new CachingConnectionFactory(settings.host(), settings.port());
+        //the context the factory takes the closing signal for - see close()
+        connectionFactory.setApplicationContext(applicationContext);
         connectionFactory.setVirtualHost(settings.virtualHost());
         connectionFactory.setUsername(settings.username());
         connectionFactory.setPassword(settings.password());
@@ -85,7 +97,7 @@ public final class NotificationConnection implements AutoCloseable {
         rabbitTemplate.setApplicationContext(applicationContext);
         rabbitTemplate.afterPropertiesSet();
 
-        return new NotificationConnection(connectionFactory, rabbitTemplate);
+        return new NotificationConnection(connectionFactory, rabbitTemplate, applicationContext);
     }
 
     /** A publisher over this connection, waiting {@link NotificationPublisher#DEFAULT_CONFIRM_TIMEOUT}. */
@@ -102,16 +114,24 @@ public final class NotificationConnection implements AutoCloseable {
         return rabbitTemplate;
     }
 
-    /** Closes the connection. As a bean this is the destroy method Spring finds by itself. */
+    /**
+     * Closes the connection for good. As a bean this is the destroy method Spring finds by itself.
+     */
+    //destroy() alone only resets the connection - the next publish would open a new one, which
+    //nothing closes any more. A CachingConnectionFactory stops for good, and shuts the executor of
+    //its channels down, only when it was told that its application context closed. As a bean it
+    //hears that from the context; built by hand it hears nothing, so it is told here
     @Override
     public void close() {
+        connectionFactory.onApplicationEvent(new ContextClosedEvent(applicationContext));
         connectionFactory.destroy();
     }
 
     /**
      * @param connectionTimeout  how long opening the connection may take; {@code null} leaves the
      *                           default of the client
-     * @param requestedHeartbeat the heartbeat asked of the broker; {@code null} leaves the default
+     * @param requestedHeartbeat the heartbeat asked of the broker, in whole seconds; zero switches it
+     *                           off, {@code null} leaves the default
      */
     public record Settings(
         String host,
@@ -128,6 +148,19 @@ public final class NotificationConnection implements AutoCloseable {
             Assert.hasText(virtualHost, "The virtual host must not be blank");
             Assert.hasText(username, "The username must not be blank");
             Assert.notNull(password, "The password must not be null");
+            Assert.isTrue(port >= 1 && port <= 65535, "The broker port must be between 1 and 65535");
+            //the client takes milliseconds and seconds as an int, and zero means something else to
+            //it: no limit for the timeout, no heartbeat at all. A value that would be cut down to
+            //zero must not get there by accident
+            Assert.isTrue(
+                connectionTimeout == null
+                    || connectionTimeout.toMillis() >= 1 && connectionTimeout.toMillis() <= Integer.MAX_VALUE,
+                "The connection timeout must be at least a millisecond");
+            Assert.isTrue(
+                requestedHeartbeat == null || requestedHeartbeat.isZero()
+                    || !requestedHeartbeat.isNegative() && requestedHeartbeat.toSeconds() >= 1
+                        && requestedHeartbeat.toSeconds() <= Integer.MAX_VALUE,
+                "The requested heartbeat must be zero or at least a second");
         }
 
         //a record prints its components, and one of them is the password

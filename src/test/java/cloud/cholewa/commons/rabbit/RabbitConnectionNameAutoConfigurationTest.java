@@ -3,6 +3,7 @@ package cloud.cholewa.commons.rabbit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionNameStrategy;
@@ -93,10 +94,17 @@ class RabbitConnectionNameAutoConfigurationTest {
             });
     }
 
-    @Test
-    void should_back_off_when_spring_amqp_is_not_on_the_classpath() {
+    //the whole of Spring AMQP and of the module of Spring Boot that configures it, with the switch
+    //left alone and with it set. This hides the classes from the condition only - what a consumer
+    //without the jars really gets is the subject of NoBrokerOnTheClasspathTest
+    @ParameterizedTest(name = "cholewa.rabbit.pod-connection-name [{0}]")
+    @ValueSource(strings = {"", "true"})
+    void should_back_off_when_spring_amqp_is_not_on_the_classpath(final String switchedOn) {
         contextRunner
-            .withClassLoader(new FilteredClassLoader(ConnectionNameStrategy.class))
+            .withPropertyValues(switchedOn.isEmpty()
+                ? new String[0]
+                : new String[] {"cholewa.rabbit.pod-connection-name=" + switchedOn})
+            .withClassLoader(new FilteredClassLoader("org.springframework.amqp", "org.springframework.boot.amqp"))
             .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(BEAN_NAME));
     }
 

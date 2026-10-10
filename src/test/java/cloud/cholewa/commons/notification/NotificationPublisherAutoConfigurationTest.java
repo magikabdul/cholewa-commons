@@ -1,6 +1,8 @@
 package cloud.cholewa.commons.notification;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitOperations;
@@ -13,12 +15,14 @@ import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 //No test here opens a connection: Spring AMQP connects with the first use of a template, and
 //nothing is published
@@ -39,6 +43,10 @@ class NotificationPublisherAutoConfigurationTest {
 
     private final ApplicationContextRunner enabled = contextRunner
         .withPropertyValues(PUBLISHING_CONNECTION)
+        .withPropertyValues("cholewa.notification.enabled=true", "cholewa.notification.env=dev");
+
+    private final ApplicationContextRunner withoutRabbitAutoConfiguration = new ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(NotificationPublisherAutoConfiguration.class))
         .withPropertyValues("cholewa.notification.enabled=true", "cholewa.notification.env=dev");
 
     @Test
@@ -96,12 +104,19 @@ class NotificationPublisherAutoConfigurationTest {
             });
     }
 
-    @Test
-    void should_back_off_when_spring_amqp_is_not_on_the_classpath() {
+    //both packages, not one class: Spring AMQP and the module of Spring Boot that configures it.
+    //This hides the classes from the conditions only - the classes of this library are still loaded
+    //by the class loader of the test, which has the jars. What a consumer without them really gets
+    //is the subject of NoBrokerOnTheClasspathTest
+    @ParameterizedTest(name = "cholewa.notification.enabled [{0}]")
+    @ValueSource(strings = {"true", "false", ""})
+    void should_back_off_when_spring_amqp_is_not_on_the_classpath(final String enabled) {
         new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(NotificationPublisherAutoConfiguration.class))
-            .withPropertyValues("cholewa.notification.enabled=true", "cholewa.notification.env=dev")
-            .withClassLoader(new FilteredClassLoader(RabbitOperations.class))
+            .withPropertyValues(enabled.isEmpty()
+                ? new String[0]
+                : new String[] {"cholewa.notification.enabled=" + enabled, "cholewa.notification.env=dev"})
+            .withClassLoader(new FilteredClassLoader("org.springframework.amqp", "org.springframework.boot.amqp"))
             .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(BEAN_NAME));
     }
 
@@ -207,11 +222,42 @@ class NotificationPublisherAutoConfigurationTest {
     //switched on in an application that has no connection to a broker at all: said at the start
     @Test
     void should_fail_the_startup_when_there_is_nothing_to_publish_over() {
-        new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(NotificationPublisherAutoConfiguration.class))
-            .withPropertyValues("cholewa.notification.enabled=true", "cholewa.notification.env=dev")
-            .run(context -> assertThat(context).hasFailed().getFailure()
-                .rootCause().hasMessageContaining(RabbitOperations.class.getName()));
+        withoutRabbitAutoConfiguration
+            .run(context -> assertThat(context).hasFailed().getFailure().rootCause()
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("there is no RabbitOperations bean to publish over"));
+    }
+
+    //which of the two leads to the notifications is not for a library to guess
+    @Test
+    void should_fail_the_startup_when_there_are_two_templates_and_none_is_primary() {
+        withoutRabbitAutoConfiguration
+            .withUserConfiguration(TwoTemplatesConfiguration.class)
+            .run(context -> assertThat(context).hasFailed().getFailure().rootCause()
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("there are 2 RabbitOperations beans and none is primary"));
+    }
+
+    @Test
+    void should_publish_over_the_primary_template_when_there_are_two() {
+        withoutRabbitAutoConfiguration
+            .withUserConfiguration(TwoTemplatesOnePrimaryConfiguration.class)
+            .run(context -> {
+                assertThat(context).hasNotFailed().hasBean(BEAN_NAME);
+                assertThat(ReflectionTestUtils.getField(context.getBean(NotificationPublisher.class), "rabbitOperations"))
+                    .isSameAs(context.getBean("notifications"));
+            });
+    }
+
+    //what a context test of a consumer with a mocked RabbitTemplate meets: the reason, not a
+    //NullPointerException
+    @Test
+    void should_fail_the_startup_with_a_reason_when_the_template_has_no_connection_factory() {
+        withoutRabbitAutoConfiguration
+            .withUserConfiguration(MockedTemplateConfiguration.class)
+            .run(context -> assertThat(context).hasFailed().getFailure().rootCause()
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("a RabbitOperations with a connection factory, and this one has none"));
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -221,6 +267,55 @@ class NotificationPublisherAutoConfigurationTest {
         NotificationPublisher notificationPublisher() {
             return new NotificationPublisher(mock(RabbitOperations.class), "notification", "dev");
         }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class TwoTemplatesConfiguration {
+
+        @Bean
+        RabbitOperations notifications() {
+            return publishingTemplate();
+        }
+
+        @Bean
+        RabbitOperations other() {
+            return publishingTemplate();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class TwoTemplatesOnePrimaryConfiguration {
+
+        @Bean
+        @Primary
+        RabbitOperations notifications() {
+            return publishingTemplate();
+        }
+
+        @Bean
+        RabbitOperations other() {
+            return publishingTemplate();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class MockedTemplateConfiguration {
+
+        @Bean
+        RabbitTemplate rabbitTemplate() {
+            return mock(RabbitTemplate.class);
+        }
+    }
+
+    //not a RabbitTemplate, so the mandatory flag cannot be asked for - the connection factory can
+    private static RabbitOperations publishingTemplate() {
+        final ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
+        when(connectionFactory.isPublisherConfirms()).thenReturn(true);
+        when(connectionFactory.isPublisherReturns()).thenReturn(true);
+
+        final RabbitOperations rabbitOperations = mock(RabbitOperations.class);
+        when(rabbitOperations.getConnectionFactory()).thenReturn(connectionFactory);
+        return rabbitOperations;
     }
 
     static class LegacyPublisher {

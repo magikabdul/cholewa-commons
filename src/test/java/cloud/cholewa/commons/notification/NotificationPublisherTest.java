@@ -12,6 +12,8 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.ReturnedMessage;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitOperations;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -33,7 +35,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 //The header names, their values, the content type and the three error texts are what the services
 //published before this class moved here - a consumer on the other side of the broker reads them
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({MockitoExtension.class, OutputCaptureExtension.class})
 class NotificationPublisherTest {
 
     @Mock
@@ -189,10 +191,12 @@ class NotificationPublisherTest {
                 && throwable.getMessage().equals("Notification not confirmed by the broker within PT25S"));
     }
 
-    //the known limit: a confirm that comes after the timeout changes nothing any more - the publish
-    //has failed, and a caller that repeats it sends the notification a second time
+    //the known limit: a confirm that comes after the timeout changes nothing any more. The publish
+    //has failed and has given the confirmation up - the future is cancelled, so the late answer of
+    //the broker is not even taken - and a caller that repeats the publish sends the notification a
+    //second time
     @Test
-    void should_stay_failed_when_the_confirmation_comes_after_the_timeout() {
+    void should_stay_failed_when_the_confirmation_comes_after_the_timeout(final CapturedOutput output) {
         final AtomicReference<CorrelationData> sent = new AtomicReference<>();
         brokerAnswers(sent::set);
 
@@ -200,7 +204,57 @@ class NotificationPublisherTest {
             .thenAwait(NotificationPublisher.DEFAULT_CONFIRM_TIMEOUT.plus(Duration.ofSeconds(1)))
             .verifyError(NotificationPublishException.class);
 
-        sent.get().getFuture().complete(new CorrelationData.Confirm(true, null));
+        assertThat(sent.get().getFuture()).isCancelled();
+        assertThat(sent.get().getFuture().complete(new CorrelationData.Confirm(true, null))).isFalse();
+        assertThat(output.getAll()).doesNotContain("Published alert notification");
+    }
+
+    //the control of the assertion on the log above: a publish that worked does leave the line
+    @Test
+    void should_log_a_notification_that_was_published(final CapturedOutput output) {
+        brokerAnswers(correlationData -> correlationData.getFuture().complete(new CorrelationData.Confirm(true, null)));
+
+        sut.publishAlert("Sensor is not reporting").as(StepVerifier::create).verifyComplete();
+
+        assertThat(output.getAll()).contains("Published alert notification (error): Sensor is not reporting");
+    }
+
+    //Spring AMQP completes the confirmation on the thread that reads the frames of the connection,
+    //inside the lock of the channel. What a caller chains after a publish must not run there: a slow
+    //step would hold up the heartbeats and every other confirm of the connection
+    @Test
+    void should_not_continue_on_the_thread_that_delivered_the_confirmation() {
+        brokerAnswersFromTheConnectionThread(new CorrelationData.Confirm(true, null));
+
+        sut.publishAlert("Sensor is not reporting")
+            .then(Mono.fromSupplier(() -> Thread.currentThread().getName()))
+            .as(StepVerifier::create)
+            .assertNext(thread -> assertThat(thread).startsWith("boundedElastic-"))
+            .verifyComplete();
+    }
+
+    @Test
+    void should_not_fail_on_the_thread_that_delivered_the_refusal() {
+        brokerAnswersFromTheConnectionThread(new CorrelationData.Confirm(false, "exchange not found"));
+
+        sut.publishAlert("Sensor is not reporting")
+            .then(Mono.just("not reached"))
+            .onErrorResume(throwable -> Mono.just(Thread.currentThread().getName()))
+            .as(StepVerifier::create)
+            .assertNext(thread -> assertThat(thread).startsWith("boundedElastic-"))
+            .verifyComplete();
+    }
+
+    //the timeout fires on a timer thread of Reactor, which is not the caller's to keep busy either
+    @Test
+    void should_not_fail_on_the_timer_thread_when_the_confirmation_never_comes() {
+        new NotificationPublisher(rabbitOperations, "notification", "dev", Duration.ofMillis(50))
+            .publishAlert("Sensor is not reporting")
+            .then(Mono.just("not reached"))
+            .onErrorResume(NotificationPublishException.class, throwable -> Mono.just(Thread.currentThread().getName()))
+            .as(StepVerifier::create)
+            .assertNext(thread -> assertThat(thread).startsWith("boundedElastic-"))
+            .verifyComplete();
     }
 
     @Test
@@ -217,6 +271,25 @@ class NotificationPublisherTest {
         assertThatIllegalArgumentException()
             .isThrownBy(() -> new NotificationPublisher(null, "notification", "dev"))
             .withMessage("RabbitOperations must not be null");
+    }
+
+    //the future is completed by a thread named like the one of the RabbitMQ client. The test control:
+    //without the hand-over in the publisher the assertions on the thread fail with this name
+    private void brokerAnswersFromTheConnectionThread(final CorrelationData.Confirm confirm) {
+        brokerAnswers(correlationData -> new Thread(() -> {
+            //after the publisher has subscribed to the future - completed before that, the future
+            //would answer on the subscribing thread and the test would prove nothing
+            sleep(Duration.ofMillis(200));
+            correlationData.getFuture().complete(confirm);
+        }, "AMQP Connection test").start());
+    }
+
+    private static void sleep(final Duration duration) {
+        try {
+            Thread.sleep(duration);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void brokerAnswers(final Consumer<CorrelationData> outcome) {
