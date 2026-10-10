@@ -71,6 +71,13 @@
 			<artifactId>r2dbc-pool</artifactId>
 			<scope>provided</scope>
 		</dependency>
+		<!-- RabbitMQ is the consumer's choice: provided, so it reaches nobody through this library,
+             and everything using it sits behind @ConditionalOnClass -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-amqp</artifactId>
+			<scope>provided</scope>
+		</dependency>
 		<!-- generates META-INF/spring-configuration-metadata.json for DatabaseProperties, so a
              consumer gets completion and validation for the database.* group instead of
              hand-maintaining additional-spring-configuration-metadata.json -->
