@@ -19,6 +19,9 @@ import reactor.test.StepVerifier;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -276,20 +279,14 @@ class NotificationPublisherTest {
     //the future is completed by a thread named like the one of the RabbitMQ client. The test control:
     //without the hand-over in the publisher the assertions on the thread fail with this name
     private void brokerAnswersFromTheConnectionThread(final CorrelationData.Confirm confirm) {
-        brokerAnswers(correlationData -> new Thread(() -> {
-            //after the publisher has subscribed to the future - completed before that, the future
-            //would answer on the subscribing thread and the test would prove nothing
-            sleep(Duration.ofMillis(200));
-            correlationData.getFuture().complete(confirm);
-        }, "AMQP Connection test").start());
-    }
+        final Executor connectionThread = task -> new Thread(task, "AMQP Connection test").start();
 
-    private static void sleep(final Duration duration) {
-        try {
-            Thread.sleep(duration);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        //some time after the send, when the publisher has subscribed to the future - completed
+        //before that, the future would answer on the subscribing thread and the test would prove
+        //nothing
+        brokerAnswers(correlationData -> CompletableFuture
+            .delayedExecutor(200, TimeUnit.MILLISECONDS, connectionThread)
+            .execute(() -> correlationData.getFuture().complete(confirm)));
     }
 
     private void brokerAnswers(final Consumer<CorrelationData> outcome) {

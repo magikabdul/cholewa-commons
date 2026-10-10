@@ -14,6 +14,8 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import reactor.core.publisher.Mono;
 
+import java.util.Optional;
+
 //The publisher for an application whose connection to the broker - the one spring.rabbitmq.*
 //configures - already leads to the virtual host of the notifications. It publishes over the
 //RabbitOperations of the context and declares neither a ConnectionFactory nor a RabbitOperations of
@@ -69,12 +71,11 @@ public class NotificationPublisherAutoConfiguration {
     //ends in a timeout, and without returns or the mandatory flag a message that matches no queue is
     //confirmed and counted as delivered. Better not to start than to find out with the first alert
     static void requireDeliveryFeedback(final RabbitOperations rabbitOperations) {
-        final ConnectionFactory connectionFactory = rabbitOperations.getConnectionFactory();
+        //Spring AMQP declares the connection factory as never null, and of a real template it is not.
+        //A mocked one - in a context test of a consumer, most likely - answers null all the same
+        final ConnectionFactory connectionFactory = Optional.ofNullable(rabbitOperations.getConnectionFactory())
+            .orElseThrow(() -> misconfigured("a RabbitOperations with a connection factory, and this one has none"));
 
-        //a mocked template in a context test of a consumer, most likely
-        if (connectionFactory == null) {
-            throw misconfigured("a RabbitOperations with a connection factory, and this one has none");
-        }
         if (!connectionFactory.isPublisherConfirms()) {
             throw misconfigured("correlated publisher confirms (spring.rabbitmq.publisher-confirm-type: correlated)");
         }
