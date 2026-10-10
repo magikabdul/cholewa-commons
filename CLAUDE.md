@@ -335,12 +335,46 @@ as the copies had them.
   Spring AMQP.
 - **Open, the owner's call: a confirm that arrives after the timeout counts as not sent**, so
   a caller that repeats the publish sends it twice — unbounded while the broker is slow.
-  Accepted "for now" in the reviews of HAS-109. This class is the one place to bound it, and
-  `should_stay_failed_when_the_confirmation_comes_after_the_timeout` pins today's behaviour.
+  Accepted "for now" in the reviews of HAS-109. This class is the one place to bound it.
+  `should_stay_failed_when_the_confirmation_comes_after_the_timeout` pins what a late confirm
+  meets today: the timeout cancelled the future, so `complete(...)` returns `false`, and no
+  "Published" line is logged (a second test is the control that a success does log it).
+- **The outcome of a publish is handed over to `boundedElastic`** (review of HAS-205).
+  `PublisherCallbackChannelImpl` completes the future of a `CorrelationData` inline, on the
+  thread that reads the frames of the connection and inside the lock of the channel, and
+  `Mono.fromFuture` continues on whatever thread completes the future. Both service copies
+  had this: what `heating-service` chains after a publish — a database write — was started on the
+  AMQP thread. The `publishOn` sits **after** the timeout, so a timeout (a timer thread of
+  Reactor) is moved as well. `boundedElastic` and not `parallel`: nothing in the library's
+  own continuation blocks, but what follows is the caller's, and on a `parallel` thread a
+  `block()` throws — which would have been a new failure for a caller that got away with it
+  on the AMQP thread. The three thread tests complete the future from a thread named `AMQP
+  Connection test` **200 ms after the send**: a future completed before the publisher
+  subscribes answers on the subscribing thread and proves nothing. Without the `publishOn`
+  all three fail (checked).
 - **`confirm-timeout` has a unit and two bounds** (`@DurationUnit(SECONDS)`, 1 s to 60 s): a
   bare `10000` meant as milliseconds would otherwise bind as close to three hours.
 - **`NotificationConnection.Settings` overrides `toString()`**: a record prints its
-  components, and one of them is the password.
+  components, and one of them is the password. It also refuses a port out of range and a
+  timeout or heartbeat the client would cut down to zero (it takes an `int` of milliseconds
+  and of seconds; zero means "no limit" and "no heartbeat"). No TLS and no address list — add
+  them to the record when a consumer needs them, not a second factory method.
+- **`NotificationConnection.close()` tells the factory that the context closed, then destroys
+  it.** `CachingConnectionFactory.destroy()` alone only resets the connection — it sets
+  `stopped` and shuts the executor of its channels down only when `getContextStopped()` is
+  true, and that flag is set by a `ContextClosedEvent` **of the context the factory was
+  given** (`setApplicationContext`). A bean hears the event from the context; a factory built
+  by hand hears nothing, and a publish after `destroy()` would have opened a connection
+  nothing closes. Read in the sources of Spring AMQP 4.1.1; two tests assert that
+  `createConnection()` refuses afterwards (by hand and through a closed context), and both
+  fail without the event (checked).
+- **Several `RabbitOperations`: counted, not conditioned.** `@ConditionalOnSingleCandidate`
+  was considered and left out: the publisher was switched on, and a condition that quietly
+  drops it moves the failure to whoever injects it, as a missing `NotificationPublisher` with
+  no word about templates. The bean method takes an `ObjectProvider`, uses the only or the
+  primary one and otherwise fails the start saying how many there are and what to do. A
+  template without a connection factory (a mock) gets the same kind of message instead of a
+  `NullPointerException`.
 - **Not auto-configured on purpose: the second connection.** The task asked for a factory
   there, and `heating-service` keeps a `NotificationRabbitConfig` of a few lines. Folding it
   into the auto-configuration (a `cholewa.notification.connection.*` group) would be the next
@@ -355,7 +389,24 @@ as the copies had them.
 `NotificationConnectionTest` use `ApplicationContextRunner` with the real
 `RabbitAutoConfiguration`: Spring AMQP connects with the first use of a template, so a context
 starts without a broker. `NotificationPublisherTest` is the test of the two service copies
-(Mockito, `StepVerifier` with virtual time) plus the configurable timeout and the late confirm.
+(Mockito, `StepVerifier` with virtual time) plus the configurable timeout, the late confirm
+and the thread a caller continues on.
+
+**A consumer without RabbitMQ — three levels of proof, in rising order.** The "not on the
+classpath" tests of the two auto-configurations use a `FilteredClassLoader` over the packages
+`org.springframework.amqp` and `org.springframework.boot.amqp`, with the switches unset and
+set. That hides the classes **from the conditions only**: the classes of this library are
+still loaded by the class loader of the test, which has the jars, so a reference to an AMQP
+type resolved too early would pass. `NoBrokerOnTheClasspathTest` closes most of that gap: it
+starts a context through a class loader that defines the classes of this library itself and
+knows nothing of the two packages, the way the class loader of `database-service` does; its
+control shows that this loader fails a class that needs Spring AMQP, and removing
+`@ConditionalOnClass` from an auto-configuration fails it (checked). It imports the two
+classes with `@ImportAutoConfiguration`, not through the `.imports` file and the whole of
+Spring Boot. **The real proof stays a build of a consumer without the jars against the
+library** — `mvn install` here, then `mvn verify -Dcholewa-commons.version=0.0.1-SNAPSHOT` on
+a copy of `database-service` (done for this change: 153 tests, its context test among them).
+Do it again whenever one of these two packages changes.
 
 `R2dbcConnectionFactoryAutoConfigurationTest` drives the auto-configuration with
 `ApplicationContextRunner`: every guard above, the pool defaults and overrides (asserted on

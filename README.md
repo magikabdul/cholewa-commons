@@ -366,7 +366,11 @@ error of the `Mono`:
 - **A confirmation that arrives after the timeout does not count.** The publish has failed by
   then; a caller that repeats it sends the notification a second time. With a slow broker that
   means duplicates, for as long as it stays slow.
-- The send blocks on the broker connection and runs on `Schedulers.boundedElastic()`.
+- **What you chain after a publish runs on `Schedulers.boundedElastic()`** — after a success, a
+  refusal and a timeout alike — never on a thread of the broker connection. Spring AMQP
+  delivers a confirmation on the thread that reads the frames of the connection; a slow step
+  there would hold up its heartbeats and every other confirmation, so the outcome is handed
+  over first. The send itself blocks on the connection and runs on the same scheduler.
 - The connection is opened by the first publish, so a wrong password shows only then — force
   it after a deployment (the RabbitMQ health indicator of Actuator does, for the connection
   Spring Boot configures).
@@ -404,8 +408,12 @@ The publisher uses the `RabbitOperations` bean of the application — the templa
 configures — and adds no connection factory and no template of its own. **The application
 does not start** unless that connection has correlated confirms and publisher returns and the
 template is mandatory: without the confirms every publish would end in the timeout, and
-without the other two a notification that reached no queue would be reported as sent. A
-`NotificationPublisher` bean of your own wins.
+without the other two a notification that reached no queue would be reported as sent. It
+does not start either when there is no `RabbitOperations` bean at all, or when there are
+several and none is `@Primary` — which one leads to the notifications is not guessed. In a
+context test that mocks the `RabbitTemplate`, switch the publisher off or mock the publisher:
+a mocked template has no connection factory to check. A `NotificationPublisher` bean of your
+own wins.
 
 The template is not given a returns callback (a `RabbitTemplate` takes only one, and it is
 yours). Without one Spring AMQP logs `Returned message but no callback available` at `WARN`
@@ -450,8 +458,16 @@ class NotificationRabbitConfig {
 `NotificationConnection` builds the connection factory and the template by hand, with
 correlated confirms, returns, the mandatory flag, a log line for a returned message and
 observation switched on. The connection is named like the first one of the pod with
-`/notification` added (`heating-service-69bccdf7f9-xzfxt/notification`) and is closed with the
-application context.
+`/notification` added (`heating-service-69bccdf7f9-xzfxt/notification`). Declared as a bean it
+is closed with the application context, and closed is final: a publish after that fails with
+`AmqpApplicationContextClosedException` instead of opening a connection again.
+
+`Settings` is one host and port, a virtual host, a user and a password, and optionally the
+connection timeout and the requested heartbeat. It does **not** cover TLS or a list of broker
+addresses (`rabbit.determineHost()` gives the first address of such a list). The port has to
+be 1 to 65535, the timeout at least a millisecond, the heartbeat zero — switched off — or at
+least a second: the client takes whole milliseconds and seconds, and a smaller value would
+reach it as zero, which means "no limit" and "no heartbeat".
 
 > **Never expose its connection factory or `rabbitOperations()` as a bean.** Spring Boot's
 > `RabbitAutoConfiguration` backs off from any `ConnectionFactory` or `RabbitOperations` bean,
