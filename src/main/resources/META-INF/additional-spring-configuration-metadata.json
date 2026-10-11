@@ -5,6 +5,12 @@
       "type": "java.lang.Boolean",
       "description": "Whether Bean Validation messages are always worded in English, regardless of the locale of the JVM or of the request. Set to false to get them localized.",
       "defaultValue": true
+    },
+    {
+      "name": "cholewa.rabbit.pod-connection-name",
+      "type": "java.lang.Boolean",
+      "description": "Whether a RabbitMQ connection is named after the pod: the value of HOSTNAME when it starts with spring.application.name followed by a dash, otherwise the application name with the suffix -local. Set to false to keep the default name of Spring AMQP.",
+      "defaultValue": true
     }
   ]
 }

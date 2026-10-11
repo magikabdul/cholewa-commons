@@ -7,10 +7,13 @@ consumers, not just the org ones. Published to GitHub Packages
 (`maven.pkg.github.com/magikabdul/cholewa-commons`, pom server id `github-prv`).
 Java 21, Spring Boot 4.1.1 (`spring-boot-starter-parent`), Maven.
 
-Org consumers, with the version each is on today (2026-10-05): `amx-service`,
-`api-gateway-service`, `database-service`, `heating-service`, `notification-service`,
-`presence-service` and `water-service` on **1.5.1**; `shelly-cloud-service` on 1.3.1,
-`boiler-service` on 1.2.0 and `ai-service` on 1.1.0. Every org consumer is on the 1.x line.
+Org consumers, with the version each is on today (2026-10-11, read from `origin/main` of
+each): `ai-service`, `amx-service`, `boiler-service`, `database-service`, `heating-service`,
+`notification-service`, `shelly-cloud-service` and `water-service` on **1.7.0**;
+`api-gateway-service` and `presence-service` on 1.5.1. Every org consumer is on the 1.x line.
+Four of them have RabbitMQ on the classpath - `amx-service`, `heating-service`,
+`notification-service`, `boiler-service` - and only those are reached by the `rabbit/` and
+`notification/` packages.
 This list drifts: the authoritative answer is the `cholewa-commons.version` property in each
 consumer's pom.
 
@@ -36,14 +39,23 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
 - `validation/` — `ValidationMessagesAutoConfiguration`: Bean Validation messages always
   from the root bundle — English for the built-in constraints — whatever the locale of the
   JVM or of the request (HAS-180).
+- `rabbit/` — `RabbitConnectionNameAutoConfiguration`: the `ConnectionNameStrategy` that
+  names a RabbitMQ connection after its pod (HAS-205).
+- `notification/` — `NotificationPublisher`, the publisher of household notifications to a
+  headers exchange; `NotificationPublisherAutoConfiguration` and `NotificationProperties` for
+  an application that publishes over its only connection, `NotificationConnection` for one
+  that needs a second connection; `NotificationPublishException` (HAS-205).
 - `info/` — `InfoController`: `GET /info` with app name, version and git commit
   (requires `application.title`/`application.version` properties and `GitProperties`
   in the consumer).
 
-There are two auto-configurations, both registered in
+There are four auto-configurations, all registered in
 `META-INF/spring/…AutoConfiguration.imports`: `R2dbcConnectionFactoryAutoConfiguration`
 (guarded by `@ConditionalOnClass` on the R2DBC types and `@ConditionalOnProperty` on
-`database.host`) and `ValidationMessagesAutoConfiguration` (on by default, see below).
+`database.host`), `ValidationMessagesAutoConfiguration` (on by default, see below),
+`RabbitConnectionNameAutoConfiguration` (on by default where Spring AMQP is on the
+classpath) and `NotificationPublisherAutoConfiguration` (opt-in,
+`cholewa.notification.enabled`).
 Everything else is opt-in:
 consumers register `GlobalErrorExceptionHandler` as a bean themselves (see README for the
 snippet).
@@ -256,7 +268,145 @@ snippet).
   without the auto-configuration — if that one ever fails, the JVM was English anyway and the
   others prove nothing.
 
+## RabbitMQ — the connection name and the notification publisher (HAS-205)
+
+Both pieces were copies in the services before they moved here (the strategy in four, the
+publisher in `heating-service` and `boiler-service`); the adoption is HAS-206. The header
+names, the levels, the content type and the three error texts are **wire contract** with
+`notification-service` and with what the services log — `NotificationPublisherTest` pins them
+as the copies had them.
+
+- **`spring-boot-amqp` is `provided`**, like the r2dbc dependencies and for the same reason:
+  six of the ten org consumers have no broker. Every class that touches Spring AMQP is either
+  an auto-configuration behind `@ConditionalOnClass` or one a consumer has to reach for
+  itself. Do not make it a compile dependency: `RabbitAutoConfiguration` would start trying
+  to configure a connection in `database-service`.
+- **Never add a `ConnectionFactory` or a `RabbitOperations` bean here.**
+  `RabbitAutoConfiguration` backs off from either, and the consumer loses its auto-configured
+  connection with everything `spring.rabbitmq.*` sets on it (manual ack, prefetch,
+  observation, the retry of the template). That is why the single-connection publisher takes
+  the `RabbitOperations` of the context and why `NotificationConnection` keeps its factory and
+  template as fields. Three tests assert `hasSingleBean(ConnectionFactory.class)` next to the
+  real `RabbitAutoConfiguration` — they are the guard, keep them.
+- **The bean names are `cholewaPodConnectionNameStrategy` and `cholewaNotificationPublisher`
+  on purpose** (the lesson of HAS-180): the services call theirs `connectionNameStrategy` and
+  `notificationPublisher`. On the day a service takes 1.8.0 and has deleted nothing, its own
+  strategy makes the library's back off (`@ConditionalOnMissingBean`), and the publisher is
+  off because nobody set `cholewa.notification.enabled`. Checked by building copies of
+  `boiler-service`, `notification-service`, `amx-service` and `database-service` against the
+  branch, unchanged.
+- **`HOSTNAME` is read from the `Environment`, not through `${HOSTNAME:}`**: an empty value
+  bypasses a placeholder default, and "missing" and "empty" have to end the same way. It
+  counts only when it starts with `spring.application.name` and a dash — outside Kubernetes
+  the variable is set to a workstation name (Git Bash, Linux shells) or a container id
+  (Docker). The test for "not set" removes the system environment from the context, because
+  every machine that runs the build has one.
+- **No application name, no strategy.** The services wrote `${spring.application.name}` and
+  could afford to fail without it; a library cannot. `@ConditionalOnProperty` takes an empty
+  value for a set one, hence the small `ApplicationNameCondition`.
+- **The connection name is on by default — for consumers outside the org too.** An
+  application with Spring AMQP and a name gets its connection renamed by the bump. It is a
+  label, nothing routes by it; the README says so and names the switch.
+- **The publisher is opt-in, and `env` has no default.** Most consumers with a broker publish
+  no notifications (`amx-service`, `notification-service`), and a default `env` would let a
+  run on a workstation publish into the production queues. `exchange` has one
+  (`notification`): a wrong exchange fails every publish loudly, a wrong `env` does not.
+- **The startup check (`requireDeliveryFeedback`) is new** — neither copy had it;
+  `boiler-service` pinned the same three settings with a context test of its own. Without
+  correlated confirms the future of a `CorrelationData` never completes (simple confirms do
+  not count), and without returns or the mandatory flag an unroutable message is confirmed
+  and counted as sent. The mandatory flag can only be asked of a `RabbitTemplate`; for another
+  `RabbitOperations` that part is skipped.
+- **A returned message reaches the publisher without a returns callback on the template.**
+  `PublisherCallbackChannelImpl` sets `CorrelationData.returned` before it looks for a
+  listener, and `RabbitTemplate.send` applies the mandatory flag when the `CorrelationData`
+  has an id (a `new CorrelationData()` always has one) — read in the sources of Spring AMQP
+  4.1.1. So the auto-configuration does not install a callback: a template takes exactly one
+  (`setReturnsCallback` throws on a second), and `boiler-service` already installs its own
+  through a `RabbitTemplateCustomizer`. `NotificationConnection` owns its template and does
+  install one.
+- **The publisher swallows nothing and retries nothing.** "A notification must neither fail
+  nor stall what it reports on" is the caller's rule to keep, because the two callers differ:
+  `boiler-service` swallows the error and cuts the publish off after 30 s, `heating-service`
+  lets it fail the pass so that the row is not written.
+- **The timeout is a `NotificationPublishException` now**, with the `TimeoutException` as its
+  cause; the copies let Reactor's `TimeoutException` through, whose message names an operator
+  instead of what happened. A broker that cannot be reached still arrives as the exception of
+  Spring AMQP.
+- **Open, the owner's call: a confirm that arrives after the timeout counts as not sent**, so
+  a caller that repeats the publish sends it twice — unbounded while the broker is slow.
+  Accepted "for now" in the reviews of HAS-109. This class is the one place to bound it.
+  `should_stay_failed_when_the_confirmation_comes_after_the_timeout` pins what a late confirm
+  meets today: the timeout cancelled the future, so `complete(...)` returns `false`, and no
+  "Published" line is logged (a second test is the control that a success does log it).
+- **The outcome of a publish is handed over to `boundedElastic`** (review of HAS-205).
+  `PublisherCallbackChannelImpl` completes the future of a `CorrelationData` inline, on the
+  thread that reads the frames of the connection and inside the lock of the channel, and
+  `Mono.fromFuture` continues on whatever thread completes the future. Both service copies
+  had this: what `heating-service` chains after a publish — a database write — was started on the
+  AMQP thread. The `publishOn` sits **after** the timeout, so a timeout (a timer thread of
+  Reactor) is moved as well. `boundedElastic` and not `parallel`: nothing in the library's
+  own continuation blocks, but what follows is the caller's, and on a `parallel` thread a
+  `block()` throws — which would have been a new failure for a caller that got away with it
+  on the AMQP thread. The three thread tests complete the future from a thread named `AMQP
+  Connection test` **200 ms after the send**: a future completed before the publisher
+  subscribes answers on the subscribing thread and proves nothing. Without the `publishOn`
+  all three fail (checked).
+- **`confirm-timeout` has a unit and two bounds** (`@DurationUnit(SECONDS)`, 1 s to 60 s): a
+  bare `10000` meant as milliseconds would otherwise bind as close to three hours.
+- **`NotificationConnection.Settings` overrides `toString()`**: a record prints its
+  components, and one of them is the password. It also refuses a port out of range and a
+  timeout or heartbeat the client would cut down to zero (it takes an `int` of milliseconds
+  and of seconds; zero means "no limit" and "no heartbeat"). No TLS and no address list — add
+  them to the record when a consumer needs them, not a second factory method.
+- **`NotificationConnection.close()` tells the factory that the context closed, then destroys
+  it.** `CachingConnectionFactory.destroy()` alone only resets the connection — it sets
+  `stopped` and shuts the executor of its channels down only when `getContextStopped()` is
+  true, and that flag is set by a `ContextClosedEvent` **of the context the factory was
+  given** (`setApplicationContext`). A bean hears the event from the context; a factory built
+  by hand hears nothing, and a publish after `destroy()` would have opened a connection
+  nothing closes. Read in the sources of Spring AMQP 4.1.1; two tests assert that
+  `createConnection()` refuses afterwards (by hand and through a closed context), and both
+  fail without the event (checked).
+- **Several `RabbitOperations`: counted, not conditioned.** `@ConditionalOnSingleCandidate`
+  was considered and left out: the publisher was switched on, and a condition that quietly
+  drops it moves the failure to whoever injects it, as a missing `NotificationPublisher` with
+  no word about templates. The bean method takes an `ObjectProvider`, uses the only or the
+  primary one and otherwise fails the start saying how many there are and what to do. A
+  template without a connection factory (a mock) gets the same kind of message instead of a
+  `NullPointerException`.
+- **Not auto-configured on purpose: the second connection.** The task asked for a factory
+  there, and `heating-service` keeps a `NotificationRabbitConfig` of a few lines. Folding it
+  into the auto-configuration (a `cholewa.notification.connection.*` group) would be the next
+  step if a second consumer of that shape appears.
+- Nothing here was run against a real broker: no test opens a connection, and the confirm /
+  return path is tested on a mocked `RabbitOperations`. The proof against a broker is the one
+  HAS-206 names — a notification published into the dev queue from a run outside the cluster.
+
 ## Tests
+
+`RabbitConnectionNameAutoConfigurationTest`, `NotificationPublisherAutoConfigurationTest` and
+`NotificationConnectionTest` use `ApplicationContextRunner` with the real
+`RabbitAutoConfiguration`: Spring AMQP connects with the first use of a template, so a context
+starts without a broker. `NotificationPublisherTest` is the test of the two service copies
+(Mockito, `StepVerifier` with virtual time) plus the configurable timeout, the late confirm
+and the thread a caller continues on.
+
+**A consumer without RabbitMQ — three levels of proof, in rising order.** The "not on the
+classpath" tests of the two auto-configurations use a `FilteredClassLoader` over the packages
+`org.springframework.amqp` and `org.springframework.boot.amqp`, with the switches unset and
+set. That hides the classes **from the conditions only**: the classes of this library are
+still loaded by the class loader of the test, which has the jars, so a reference to an AMQP
+type resolved too early would pass. `NoBrokerOnTheClasspathTest` closes most of that gap: it
+starts a context through a class loader that defines the classes of this library itself and
+knows nothing of the two packages, the way the class loader of `database-service` does; its
+control shows that this loader fails a class that needs Spring AMQP, and removing
+`@ConditionalOnClass` from an auto-configuration fails it (checked). It imports the two
+classes with `@ImportAutoConfiguration`, not through the `.imports` file and the whole of
+Spring Boot. **The real proof stays a build of a consumer without the jars against the
+library** — `mvn install` here, then `mvn verify -Dcholewa-commons.version=0.0.1-SNAPSHOT` on
+a copy of `database-service` (done for this change: 153 tests, its context test among them).
+Do it again whenever one of these two packages changes.
 
 `R2dbcConnectionFactoryAutoConfigurationTest` drives the auto-configuration with
 `ApplicationContextRunner`: every guard above, the pool defaults and overrides (asserted on

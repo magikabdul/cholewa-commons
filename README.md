@@ -21,7 +21,8 @@
 Common building blocks for reactive (WebFlux) Spring Boot services: a global error
 handler with a pluggable exception-processor mechanism, a consistent JSON error model,
 an auto-configured pooled R2DBC connection factory, Bean Validation messages pinned to
-English and a simple `/info` endpoint exposing application name, version and git commit.
+English, a RabbitMQ connection named after its pod, a publisher of household notifications
+and a simple `/info` endpoint exposing application name, version and git commit.
 
 Used by the [smart-home-automation-system](https://github.com/smart-home-automation-system)
 services (`ai-service`, `amx-service`, `api-gateway-service`, `boiler-service`,
@@ -37,7 +38,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.7.0</version>
+    <version>1.8.0</version>
 </dependency>
 ```
 
@@ -298,6 +299,185 @@ every consumer of this library.
 - To get localized messages back, set `cholewa.validation.english-messages: false`.
 - A consumer that already carries a customizer doing the same can delete it; until it does,
   the two coexist.
+
+### RabbitMQ connection named after the pod
+
+From 1.8.0 an application with Spring AMQP on the classpath gets a `ConnectionNameStrategy`
+from auto-configuration, and Spring Boot hands it to the connection factory it configures.
+The management UI of the broker then shows who is connected:
+
+| `HOSTNAME` | Connection name |
+|---|---|
+| starts with `spring.application.name` and a dash — a pod: `heating-service-69bccdf7f9-xzfxt` | the value as it is, which tells the old pod from the new one during a rollout |
+| anything else — a workstation, a container id, a pod of another application, empty, not set | `<spring.application.name>-local` |
+
+Nothing to declare. Outside Kubernetes `HOSTNAME` is not simply missing — Git Bash and Linux
+shells set it to the name of the machine, plain Docker to a container id — which is why only a
+value that starts with the application name counts.
+
+- It needs `spring.application.name`; without one (or with a blank one) the default name of
+  Spring AMQP is left alone.
+- A `ConnectionNameStrategy` bean of your own wins; the one from this library is then not
+  created.
+- `cholewa.rabbit.pod-connection-name: false` switches it off.
+- **Taking 1.8.0 renames the connection** of an application that has Spring AMQP and an
+  application name. It is only the label the broker shows; nothing routes by it.
+- An application without Spring AMQP is not affected: the dependency is `provided`, so it
+  does not arrive through this library.
+
+### Notification publisher
+
+`NotificationPublisher` (from 1.8.0) publishes a notification for the household as plain text
+to a RabbitMQ **headers exchange**. The routing key is empty; the exchange routes by two
+headers and the consumer reads the third:
+
+| Method | `category` | `level` | Meaning |
+|---|---|---|---|
+| `publishAlert(text)` | `alert` | `error` | something went wrong |
+| `publishReminder(text)` | `alert` | `warn` | it is still wrong — the same queue as the alert |
+| `publishInfo(text)` | `info` | `info` | it is fine again |
+
+Every message also carries `env` (for example `prod` or `dev`), content type `text/plain` and
+encoding `UTF-8`. These names and values are the wire contract with the consumer of the
+queues; the exchange, the queues and the bindings are expected to exist — the publisher
+declares nothing.
+
+```java
+notificationPublisher.publishAlert("The sensor in the office is not reporting")
+    .then(alertRepository.save(alert));   // runs only when the message is in a queue
+```
+
+**The returned `Mono` completes only when the broker has taken the message into a queue**: it
+confirmed the message *and* did not hand it back. A send that merely returns proves nothing —
+the broker confirms a message that matches no binding too, after returning it. So state that
+depends on a notification can be written after the `Mono` completes. Every other outcome is an
+error of the `Mono`:
+
+| Outcome | Error |
+|---|---|
+| the broker refused the message (nack) | `NotificationPublishException` — `Notification refused by the broker: <reason>` |
+| the message matched no queue | `NotificationPublishException` — `Notification was not routed to any queue: <reply text>` |
+| no confirmation within the timeout (10 s by default) | `NotificationPublishException` — `Notification not confirmed by the broker within PT10S` |
+| the broker cannot be reached | the exception of Spring AMQP, as it comes (`AmqpConnectException`, …) |
+
+- **Nothing is retried and nothing is swallowed.** A notification must neither fail nor stall
+  what it reports on, and only the caller knows what that takes: put an `onErrorResume` and a
+  timeout of your own around a publish that sits in a control loop.
+- **A confirmation that arrives after the timeout does not count.** The publish has failed by
+  then; a caller that repeats it sends the notification a second time. With a slow broker that
+  means duplicates, for as long as it stays slow.
+- **What you chain after a publish runs on `Schedulers.boundedElastic()`** — after a success, a
+  refusal and a timeout alike — never on a thread of the broker connection. Spring AMQP
+  delivers a confirmation on the thread that reads the frames of the connection; a slow step
+  there would hold up its heartbeats and every other confirmation, so the outcome is handed
+  over first. The send itself blocks on the connection and runs on the same scheduler.
+- The connection is opened by the first publish, so a wrong password shows only then — force
+  it after a deployment (the RabbitMQ health indicator of Actuator does, for the connection
+  Spring Boot configures).
+
+There are two ways to get a publisher, for the two shapes of application.
+
+#### One connection, already on the virtual host of the notifications
+
+Point `spring.rabbitmq.*` at that virtual host and switch the publisher on:
+
+```yaml
+spring:
+  rabbitmq:
+    virtual-host: /notification
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+      observation-enabled: true   # the published message carries the trace of what raised it
+
+cholewa:
+  notification:
+    enabled: true
+    env: prod
+```
+
+| Property | Default | Description |
+|---|---|---|
+| `cholewa.notification.enabled` | `false` | The switch; the publisher exists only when it is `true` |
+| `cholewa.notification.env` | — | Value of the `env` header. Mandatory, and without a default on purpose: with one, a run on a workstation would publish into the queues of production |
+| `cholewa.notification.exchange` | `notification` | The headers exchange |
+| `cholewa.notification.confirm-timeout` | `10s` | How long the confirmation of the broker is waited for; a bare number is seconds, 1 s to 60 s |
+
+The publisher uses the `RabbitOperations` bean of the application — the template Spring Boot
+configures — and adds no connection factory and no template of its own. **The application
+does not start** unless that connection has correlated confirms and publisher returns and the
+template is mandatory: without the confirms every publish would end in the timeout, and
+without the other two a notification that reached no queue would be reported as sent. It
+does not start either when there is no `RabbitOperations` bean at all, or when there are
+several and none is `@Primary` — which one leads to the notifications is not guessed. In a
+context test that mocks the `RabbitTemplate`, switch the publisher off or mock the publisher:
+a mocked template has no connection factory to check. A `NotificationPublisher` bean of your
+own wins.
+
+The template is not given a returns callback (a `RabbitTemplate` takes only one, and it is
+yours). Without one Spring AMQP logs `Returned message but no callback available` at `WARN`
+for a message that matched no queue; add a `RabbitTemplateCustomizer` if you want a line of
+your own.
+
+#### A second connection, to another virtual host
+
+A connection belongs to exactly one virtual host. An application whose own connection leads
+elsewhere — a listener on another virtual host — needs a second one for the notifications,
+and leaves `cholewa.notification.enabled` off:
+
+```java
+@Configuration
+class NotificationRabbitConfig {
+
+    @Bean
+    NotificationConnection notificationConnection(
+        RabbitProperties rabbit,                       // the same broker, another virtual host
+        MyNotificationProperties notification,
+        ConnectionNameStrategy connectionNameStrategy,
+        ApplicationContext applicationContext
+    ) {
+        return NotificationConnection.create(
+            new NotificationConnection.Settings(
+                rabbit.determineHost(), rabbit.determinePort(),
+                notification.virtualHost(), notification.username(), notification.password(),
+                rabbit.getConnectionTimeout(), rabbit.getRequestedHeartbeat()),
+            connectionNameStrategy,
+            applicationContext);
+    }
+
+    @Bean
+    NotificationPublisher notificationPublisher(
+        NotificationConnection connection, MyNotificationProperties notification
+    ) {
+        return connection.publisher(notification.exchange(), notification.env());
+    }
+}
+```
+
+`NotificationConnection` builds the connection factory and the template by hand, with
+correlated confirms, returns, the mandatory flag, a log line for a returned message and
+observation switched on. The connection is named like the first one of the pod with
+`/notification` added (`heating-service-69bccdf7f9-xzfxt/notification`). Declared as a bean it
+is closed with the application context, and closed is final: a publish after that fails with
+`AmqpApplicationContextClosedException` instead of opening a connection again.
+
+`Settings` is one host and port, a virtual host, a user and a password, and optionally the
+connection timeout and the requested heartbeat. It does **not** cover TLS or a list of broker
+addresses (`rabbit.determineHost()` gives the first address of such a list). The port has to
+be 1 to 65535, the timeout at least a millisecond, the heartbeat zero — switched off — or at
+least a second: the client takes whole milliseconds and seconds, and a smaller value would
+reach it as zero, which means "no limit" and "no heartbeat".
+
+> **Never expose its connection factory or `rabbitOperations()` as a bean.** Spring Boot's
+> `RabbitAutoConfiguration` backs off from any `ConnectionFactory` or `RabbitOperations` bean,
+> and the listeners of the application would lose the auto-configured connection together
+> with everything `spring.rabbitmq.*` sets on it — acknowledge mode, prefetch, observation.
+> The `NotificationConnection` and the publisher are safe to declare; that is what the class
+> is for.
+
+The second connection is not covered by the RabbitMQ health indicator, which looks at the
+`RabbitTemplate` beans.
 
 ### Info endpoint
 
