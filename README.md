@@ -38,7 +38,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 
@@ -478,6 +478,35 @@ reach it as zero, which means "no limit" and "no heartbeat".
 
 The second connection is not covered by the RabbitMQ health indicator, which looks at the
 `RabbitTemplate` beans.
+
+### Required properties checked at the start
+
+A property bound from a placeholder Spring cannot resolve keeps the placeholder as its text:
+`spring.rabbitmq.password: ${rabbitmq-password}` without the variable becomes the password
+`${rabbitmq-password}`, the application starts and turns Ready, and the broker refuses it later.
+List the properties the application must not start without, and the start is refused **before
+the first bean is created** — no connection opened, no migration run:
+
+```yaml
+cholewa:
+  required-properties:
+    - property: spring.rabbitmq.password
+      variable: rabbitmq-password            # optional, named in the refusal
+    - property: notification.password
+      variable: notification-rabbitmq-password
+```
+
+```
+A required property has no value: spring.rabbitmq.password (set rabbitmq-password)
+```
+
+- A property counts as missing when it is not set, is blank, or holds a placeholder that does
+  not resolve. Every missing one is named in one message.
+- The value is never quoted — not even the part of a password with `${` in it that did resolve.
+- **Nothing is checked without the list** (since 1.9.0): an application that does not list
+  anything is not touched by the upgrade.
+- A profile for a workstation or for tests gives the properties a default (`${rabbitmq-password:dummyPassword}`)
+  and passes the check; the list stays in the shared document.
 
 ### Info endpoint
 

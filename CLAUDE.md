@@ -45,17 +45,22 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
   headers exchange; `NotificationPublisherAutoConfiguration` and `NotificationProperties` for
   an application that publishes over its only connection, `NotificationConnection` for one
   that needs a second connection; `NotificationPublishException` (HAS-205).
+- `startup/` — `RequiredPropertiesAutoConfiguration`: refuses the start, before the first bean,
+  when a property the application lists under `cholewa.required-properties` has no value or an
+  unresolvable placeholder (HAS-235; the `BrokerPasswordCheck` of heating-, boiler- and
+  blinds-service, a fourth copy was due in weather-service).
 - `info/` — `InfoController`: `GET /info` with app name, version and git commit
   (requires `application.title`/`application.version` properties and `GitProperties`
   in the consumer).
 
-There are four auto-configurations, all registered in
+There are five auto-configurations, all registered in
 `META-INF/spring/…AutoConfiguration.imports`: `R2dbcConnectionFactoryAutoConfiguration`
 (guarded by `@ConditionalOnClass` on the R2DBC types and `@ConditionalOnProperty` on
 `database.host`), `ValidationMessagesAutoConfiguration` (on by default, see below),
 `RabbitConnectionNameAutoConfiguration` (on by default where Spring AMQP is on the
-classpath) and `NotificationPublisherAutoConfiguration` (opt-in,
-`cholewa.notification.enabled`).
+classpath), `NotificationPublisherAutoConfiguration` (opt-in,
+`cholewa.notification.enabled`) and `RequiredPropertiesAutoConfiguration` (inert without
+`cholewa.required-properties`).
 Everything else is opt-in:
 consumers register `GlobalErrorExceptionHandler` as a bean themselves (see README for the
 snippet).
@@ -382,6 +387,21 @@ as the copies had them.
 - Nothing here was run against a real broker: no test opens a connection, and the confirm /
   return path is tested on a mocked `RabbitOperations`. The proof against a broker is the one
   HAS-206 names — a notification published into the dev queue from a run outside the cluster.
+
+## Required properties (HAS-235) — what to keep
+
+- **Opt-in by the list, on purpose.** The copies checked the broker passwords by name; a library
+  cannot: a consumer outside the org with RabbitMQ and the default `guest` password has no
+  `spring.rabbitmq.password` at all, and a check by default would fail its start on the bump.
+- **A `static` `BeanFactoryPostProcessor`**, so it runs after the configuration is read and
+  before any singleton - the copies' guarantee that a refused start opened nothing. The list is
+  read with the `Binder`, not a `@ConfigurationProperties` bean: no bean exists yet at that point.
+- **Never quote a value, never Boot's `InvalidConfigurationPropertyValueException`** (its failure
+  analysis prints the value) - the same rule as in the copies, pinned by
+  `should_not_repeat_a_value_it_cannot_resolve`.
+- The bean name `cholewaRequiredPropertiesCheck` is the library's own (the lesson of HAS-180):
+  the services call their copies' method `brokerPasswordCheckProcessor`, so both coexist on the
+  day a service bumps before deleting its copy.
 
 ## Tests
 
