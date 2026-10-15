@@ -4,12 +4,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.annotation.ImportCandidates;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.PriorityOrdered;
 import org.springframework.core.env.StandardEnvironment;
 
 import java.io.PrintWriter;
@@ -24,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RequiredPropertiesAutoConfigurationTest {
 
     private static final AtomicBoolean BEAN_CREATED = new AtomicBoolean();
+    private static final AtomicBoolean ORDERED_POST_PROCESSOR_RAN = new AtomicBoolean();
 
     private static final String[] TWO_PASSWORDS = {
         "spring.rabbitmq.password=${rabbitmq-password}",
@@ -45,6 +49,7 @@ class RequiredPropertiesAutoConfigurationTest {
     @BeforeEach
     void setUp() {
         BEAN_CREATED.set(false);
+        ORDERED_POST_PROCESSOR_RAN.set(false);
     }
 
     @Test
@@ -106,7 +111,6 @@ class RequiredPropertiesAutoConfigurationTest {
                 "cholewa.required-properties[0].property=spring.rabbitmq.password")
             .run(context -> assertThat(context.getStartupFailure())
                 .hasStackTraceContaining("A required property has no value: spring.rabbitmq.password")
-                .hasStackTraceContaining("spring.rabbitmq.password")
                 .satisfies(failure -> assertThat(stackTraceOf(failure)).doesNotContain("(set ")));
     }
 
@@ -119,6 +123,30 @@ class RequiredPropertiesAutoConfigurationTest {
                 assertThat(context).hasFailed();
                 assertThat(BEAN_CREATED).isFalse();
             });
+    }
+
+    //a post-processor of the application runs after the check, even an ordered one: what it might
+    //create is not created for a start that is refused
+    @Test
+    void should_refuse_the_start_before_an_ordered_post_processor_runs() {
+        contextRunner
+            .withUserConfiguration(OrderedPostProcessor.class)
+            .withPropertyValues(TWO_PASSWORDS)
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(ORDERED_POST_PROCESSOR_RAN).isFalse();
+            });
+    }
+
+    //an environment told to ignore unresolvable placeholders hands their text back as the value
+    @Test
+    void should_not_take_a_placeholder_left_as_text_for_a_value() {
+        contextRunner
+            .withInitializer(context -> context.getEnvironment().setIgnoreUnresolvableNestedPlaceholders(true))
+            .withPropertyValues(TWO_PASSWORDS)
+            .withPropertyValues("notification-rabbitmq-password=secret")
+            .run(context -> assertThat(context.getStartupFailure())
+                .hasStackTraceContaining("A required property has no value: spring.rabbitmq.password (set rabbitmq-password)"));
     }
 
     @Test
@@ -169,6 +197,28 @@ class RequiredPropertiesAutoConfigurationTest {
         final StringWriter trace = new StringWriter();
         failure.printStackTrace(new PrintWriter(trace));
         return trace.toString();
+    }
+
+    @Configuration
+    static class OrderedPostProcessor {
+
+        @Bean
+        static BeanFactoryPostProcessor orderedPostProcessor() {
+            return new OrderedBeanFactoryPostProcessor();
+        }
+    }
+
+    static class OrderedBeanFactoryPostProcessor implements BeanFactoryPostProcessor, PriorityOrdered {
+
+        @Override
+        public void postProcessBeanFactory(final ConfigurableListableBeanFactory beanFactory) {
+            ORDERED_POST_PROCESSOR_RAN.set(true);
+        }
+
+        @Override
+        public int getOrder() {
+            return 0;
+        }
     }
 
     @Configuration

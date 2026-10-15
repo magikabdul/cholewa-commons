@@ -1,10 +1,13 @@
 package cloud.cholewa.commons.startup;
 
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.Ordered;
+import org.springframework.core.PriorityOrdered;
 import org.springframework.core.env.Environment;
 import org.springframework.util.PlaceholderResolutionException;
 import org.springframework.util.StringUtils;
@@ -29,12 +32,29 @@ import java.util.List;
 public class RequiredPropertiesAutoConfiguration {
 
     static final String PREFIX = "cholewa.required-properties";
+    private static final String PLACEHOLDER_PREFIX = "${";
 
     //static: a BeanFactoryPostProcessor declared by an instance method would create this class
-    //early, and Spring warns about it
+    //early, and Spring warns about it. PriorityOrdered and first among them: the post-processors run
+    //by their order, and one of them may create beans - a refusal after it would come too late. The
+    //method returns the type itself: Spring sorts the post-processors by the declared type of the bean
+    //method, and BeanFactoryPostProcessor alone does not say PriorityOrdered
     @Bean
-    static BeanFactoryPostProcessor cholewaRequiredPropertiesCheck(final Environment environment) {
-        return beanFactory -> check(environment);
+    static Check cholewaRequiredPropertiesCheck(final Environment environment) {
+        return new Check(environment);
+    }
+
+    record Check(Environment environment) implements BeanFactoryPostProcessor, PriorityOrdered {
+
+        @Override
+        public void postProcessBeanFactory(final ConfigurableListableBeanFactory beanFactory) {
+            check(environment);
+        }
+
+        @Override
+        public int getOrder() {
+            return Ordered.HIGHEST_PRECEDENCE;
+        }
     }
 
     static void check(final Environment environment) {
@@ -45,7 +65,7 @@ public class RequiredPropertiesAutoConfiguration {
         final List<String> missing = new ArrayList<>();
         for (int i = 0; i < required.size(); i++) {
             final RequiredProperty entry = required.get(i);
-            if (entry == null || !StringUtils.hasText(entry.property())) {
+            if (!StringUtils.hasText(entry.property())) {
                 throw new IllegalStateException(PREFIX + "[" + i + "].property names no property");
             }
             if (!hasValue(environment, entry.property())) {
@@ -58,9 +78,12 @@ public class RequiredPropertiesAutoConfiguration {
         }
     }
 
+    //A value that still holds "${" is a placeholder left unresolved by an environment told to ignore
+    //such placeholders; a password with "${" in it would not resolve anyway
     private static boolean hasValue(final Environment environment, final String property) {
         try {
-            return StringUtils.hasText(environment.getProperty(property));
+            final String value = environment.getProperty(property);
+            return StringUtils.hasText(value) && !value.contains(PLACEHOLDER_PREFIX);
         } catch (PlaceholderResolutionException e) {
             return false;
         }

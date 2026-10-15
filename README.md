@@ -502,6 +502,11 @@ A required property has no value: spring.rabbitmq.password (set rabbitmq-passwor
 
 - A property counts as missing when it is not set, is blank, or holds a placeholder that does
   not resolve. Every missing one is named in one message.
+- The check is the first `BeanFactoryPostProcessor` (`PriorityOrdered`, highest precedence): no
+  post-processor of the application runs before it.
+- It names **scalar** properties, looked up by their canonical name; a property set as a list or
+  map (`x[0]`, `x.key`) is not found under `x`.
+- Not for Spring AOT / native images: there the post-processors run at build time.
 - The value is never quoted — not even the part of a password with `${` in it that did resolve.
 - **Nothing is checked without the list** (since 1.9.0): an application that does not list
   anything is not touched by the upgrade.

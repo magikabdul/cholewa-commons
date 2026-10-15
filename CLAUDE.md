@@ -399,6 +399,13 @@ as the copies had them.
 - **Never quote a value, never Boot's `InvalidConfigurationPropertyValueException`** (its failure
   analysis prints the value) - the same rule as in the copies, pinned by
   `should_not_repeat_a_value_it_cannot_resolve`.
+- **`PriorityOrdered`, highest precedence, and the bean method returns `Check` itself** (review of
+  HAS-235): Spring sorts the post-processors by the declared type of the bean method - declared as
+  `BeanFactoryPostProcessor` it ran after every ordered one, and an ordered post-processor of the
+  application that creates beans would have run first. The copies in the services had that hole.
+  `should_refuse_the_start_before_an_ordered_post_processor_runs` fails without either part.
+- A resolved value that still holds `${` counts as missing: an environment set to ignore
+  unresolvable placeholders hands their text back.
 - The bean name `cholewaRequiredPropertiesCheck` is the library's own (the lesson of HAS-180):
   the services call their copies' method `brokerPasswordCheckProcessor`, so both coexist on the
   day a service bumps before deleting its copy.
