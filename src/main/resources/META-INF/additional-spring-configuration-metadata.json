@@ -11,6 +11,11 @@
       "type": "java.lang.Boolean",
       "description": "Whether a RabbitMQ connection is named after the pod: the value of HOSTNAME when it starts with spring.application.name followed by a dash, otherwise the application name with the suffix -local. Set to false to keep the default name of Spring AMQP.",
       "defaultValue": true
+    },
+    {
+      "name": "cholewa.required-properties",
+      "type": "java.util.List<cloud.cholewa.commons.startup.RequiredPropertiesAutoConfiguration$RequiredProperty>",
+      "description": "Properties the application does not start without, each as {property, variable}: when one has no value, or holds a placeholder that does not resolve, the start is refused before the first bean is created. The variable is optional and only named in the refusal. Nothing is checked without the list."
     }
   ]
 }
