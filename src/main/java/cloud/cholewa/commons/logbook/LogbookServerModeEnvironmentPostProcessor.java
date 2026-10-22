@@ -1,5 +1,6 @@
 package cloud.cholewa.commons.logbook;
 
+import org.jspecify.annotations.NonNull;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -30,7 +31,7 @@ public class LogbookServerModeEnvironmentPostProcessor implements EnvironmentPos
         "org.zalando.logbook.autoconfigure.webflux.LogbookWebFluxAutoConfiguration";
 
     @Override
-    public void postProcessEnvironment(final ConfigurableEnvironment environment, final SpringApplication application) {
+    public void postProcessEnvironment(final @NonNull ConfigurableEnvironment environment, final SpringApplication application) {
         if (!ClassUtils.isPresent(LOGBOOK_WEBFLUX, application.getClassLoader())) {
             return;
         }
