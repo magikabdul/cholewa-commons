@@ -1,2 +1,3 @@
 org.springframework.boot.EnvironmentPostProcessor=\
-  cloud.cholewa.commons.logbook.LogbookServerModeEnvironmentPostProcessor
+  cloud.cholewa.commons.logbook.LogbookServerModeEnvironmentPostProcessor,\
+  cloud.cholewa.commons.scheduling.SchedulingPoolEnvironmentPostProcessor
