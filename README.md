@@ -7,7 +7,7 @@
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=magikabdul_cholewa-commons&metric=coverage)](https://sonarcloud.io/summary/new_code?id=magikabdul_cholewa-commons)
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=magikabdul_cholewa-commons&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=magikabdul_cholewa-commons)
 ![Java](https://img.shields.io/badge/java-21-yellow?style=plastic)
-![SpringBoot](https://img.shields.io/badge/SpringBoot-4.1.1-blue?style=plastic)
+![SpringBoot](https://img.shields.io/badge/SpringBoot-4.1.2-blue?style=plastic)
 
 ![GitHub issues](https://img.shields.io/github/issues/magikabdul/cholewa-commons?style=plastic)
 ![GitHub contributors](https://img.shields.io/github/contributors/magikabdul/cholewa-commons?style=plastic)
@@ -21,7 +21,8 @@
 Common building blocks for reactive (WebFlux) Spring Boot services: a global error
 handler with a pluggable exception-processor mechanism, a consistent JSON error model,
 an auto-configured pooled R2DBC connection factory, Bean Validation messages pinned to
-English, a RabbitMQ connection named after its pod, a publisher of household notifications
+English, a RabbitMQ connection named after its pod, a publisher of household notifications,
+scheduled tasks that a hung one cannot stop
 and a simple `/info` endpoint exposing application name, version and git commit.
 
 Used by the [smart-home-automation-system](https://github.com/smart-home-automation-system)
@@ -38,7 +39,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.10.1</version>
+    <version>1.11.0</version>
 </dependency>
 ```
 
@@ -551,6 +552,52 @@ does anywhere else in a reactive chain. What to know:
   request and no response line. An application with a `logbook.server.predicate.exclude` of its
   own keeps exactly its list (a list binds whole from the first source that has one) and names
   the actuator itself; `cholewa.logbook.exclude-actuator: false` logs the probes again.
+
+### Scheduled tasks that a hung one cannot stop
+
+Since 1.11.0. Spring runs a reactive `@Scheduled` method with a fixed delay by blocking a thread
+of the task scheduler until the returned publisher completes, and Boot gives the scheduler **one
+thread** by default: a single pass that never completes - a database call through a connection
+that died, a device that never answers - stops **every** scheduled task of the application, while
+its health stays `UP`. Two parts, and a service needs both:
+
+- **A pool for the scheduler, by default.** `spring.task.scheduling.pool.size` is defaulted to
+  `10` (an `EnvironmentPostProcessor`; a value the application sets - in a file or as
+  `SPRING_TASK_SCHEDULING_POOL_SIZE` - wins). A task that hangs holds one thread; the others keep
+  their schedule. Nothing to configure. An application with more scheduled tasks than that sets
+  the property itself; with virtual threads Boot's scheduler has no pool and the property does
+  nothing.
+- **Every pass bounded in time** - `ScheduledPass.bounded` around the body of every reactive
+  `@Scheduled` method:
+
+  ```java
+  @Scheduled(initialDelayString = "PT20S", fixedDelayString = "PT60S")
+  Mono<Void> poll() {
+      return ScheduledPass.bounded("blinds state poll", Duration.ofSeconds(50), this::pollAll);
+  }
+  ```
+
+  The pass is built anew for every run (Spring subscribes again and again to the one `Mono` the
+  method returned, so building it inside a `Supplier` is what keeps "now" from being frozen at the
+  start); a pass longer than the limit is cancelled - what it waited for is cancelled with it -
+  and logged at `WARN` with the name of the task; a pass that fails is a `WARN` with its cause.
+  Either way the returned `Mono` completes and the next run happens on schedule.
+
+  Choose the limit per task: below its fixed delay, above what a healthy pass takes. What must
+  not be cut off halfway - a command to a device that may already be moving - stays outside the
+  bounded part, with the timeout of its own client.
+
+Without the bound a hung task holds its thread for good and never runs again, however large the
+pool; without the pool a bounded hung pass still stops the others until its limit.
+
+Two things change for an application on the bump:
+
+- **Its scheduled tasks may now run at the same time.** On one thread they never overlapped;
+  state two tasks share has to be safe for that, and their passes may ask the database pool for
+  connections at once - a small pool waits longer for one.
+- **A pass that reached its limit counts as completed** for Spring's observation of the task
+  (`tasks.scheduled.execution`): the `WARN` line is the signal, not the metric. An error would
+  have ended the run with an `ERROR` from Spring every time, which is what the bound avoids.
 
 ### Info endpoint
 

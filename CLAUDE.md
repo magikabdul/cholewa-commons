@@ -52,6 +52,10 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
 - `logbook/` — `LogbookReactiveAutoConfiguration` and `LogbookServerModeEnvironmentPostProcessor`:
   Logbook logs from inside the reactive chain (its WebFilter and its `ExchangeFilterFunction`
   instead of its Netty handlers), so its request and response lines carry the trace (HAS-298).
+- `scheduling/` — `SchedulingPoolEnvironmentPostProcessor` and `ScheduledPass`: a pool for
+  Boot's task scheduler by default and a time bound for every reactive `@Scheduled` pass, so a
+  hung task stops neither the others nor itself for good (HAS-300, after blinds-service froze on
+  2026-10-22).
 - `info/` — `InfoController`: `GET /info` with app name, version and git commit
   (requires `application.title`/`application.version` properties and `GitProperties`
   in the consumer).
@@ -64,9 +68,9 @@ There are six auto-configurations, all registered in
 classpath), `NotificationPublisherAutoConfiguration` (opt-in,
 `cholewa.notification.enabled`), `RequiredPropertiesAutoConfiguration` (inert without
 `cholewa.required-properties`) and `LogbookReactiveAutoConfiguration` (on by default where
-Logbook's WebFlux pieces are on the classpath). The one `EnvironmentPostProcessor`,
-`LogbookServerModeEnvironmentPostProcessor`, is registered in `META-INF/spring.factories` -
-the only way Boot finds one.
+Logbook's WebFlux pieces are on the classpath). The two `EnvironmentPostProcessor`s,
+`LogbookServerModeEnvironmentPostProcessor` and `SchedulingPoolEnvironmentPostProcessor`, are
+registered in `META-INF/spring.factories` - the only way Boot finds one.
 Everything else is opt-in:
 consumers register `GlobalErrorExceptionHandler` as a bean themselves (see README for the
 snippet).
@@ -460,7 +464,57 @@ as the copies had them.
   `WebClient`: the server side gets the filter, the proxied calls are whatever the gateway logs
   today - re-test it on the bump, as every gateway bump is.
 
+## Scheduled tasks (HAS-300) — what to keep
+
+- **Why it exists:** Spring 6.1+ runs a reactive `@Scheduled` method with a fixed delay by
+  subscribing on a thread of the scheduler and **blocking that thread on a `CountDownLatch`**
+  until the publisher completes (`ScheduledAnnotationReactiveSupport.SubscribingRunnable`), and
+  Boot's `ThreadPoolTaskScheduler` has one thread by default. On 2026-10-22 one pass of
+  blinds-service waited for a database call through a connection that died in a short outage:
+  all six tasks stopped for 1.5 hours (no blind closed at dusk) with the health `UP`. Seen in a
+  thread dump: `scheduling-1` parked in that `await`.
+- **The two parts are needed together.** The pool keeps the other tasks running; only the bound
+  brings the hung task back - without it the task holds its thread for good. The README says so;
+  the service tasks of the epic (HAS-301…307) wrap every reactive `@Scheduled` method.
+- **The pool is a default, not a setting**: `addLast` like the Logbook defaults, read with the
+  `Binder` so the relaxed names of a variable count as set. 10 is above the most tasks of an org
+  service (light-service: 8); an idle scheduler thread costs nothing. It reaches **consumers
+  outside the org** on the bump too - harmless: a larger pool changes nothing for an application
+  whose tasks never hang. With `spring.threads.virtual.enabled` Boot builds a
+  `SimpleAsyncTaskScheduler` and nobody reads the property.
+- **`ScheduledPass.bounded` takes a `Supplier`, not a `Mono`**, on purpose: Spring subscribes
+  again and again to the one `Mono` the method returned (the org rule "a reactive `@Scheduled`
+  method is called once"), so a `Mono` built by the caller would freeze whatever it read while
+  being built. The supplier is `Mono.defer`red - built for every run.
+- **The limit is a marker of its own** (`LimitReached`, no stack trace, never leaves the class):
+  a `TimeoutException` from inside the pass - a client's timeout - is a failure of the pass and is
+  logged as one, not as the limit. The `Mono` always completes: an error would end the
+  subscription of the run and Spring would log it at `ERROR` every time, and the point is that the
+  next run happens.
+- **The pool makes the tasks of a consumer concurrent** (service-review of HAS-300): on one
+  thread they never overlapped. A consumer's tasks that share state without synchronisation, or
+  that together ask more of a small R2DBC pool (2 connections in most services) than it has, are
+  the consumer's to check on the bump - written in the README and in HAS-301…307.
+- **A pass ended at its limit is a success for Spring's observation** (`tasks.scheduled.execution`):
+  the `WARN` is the signal. Deliberate - see the previous point on why the `Mono` completes.
+- **What the timeout cancels is cancelled**: a database call or an HTTP call in flight. A command
+  to a device that must not be cut off halfway stays outside the bounded part - the caller's
+  decision, written in the Javadoc and the README (blinds-service keeps its commands outside).
+- **Tests close the context quickly on purpose**: the scheduler waits for its running tasks when
+  the context closes, up to `spring.lifecycle.timeout-per-shutdown-phase` (10 s) - which needs
+  `LifecycleAutoConfiguration` imported to be read. The hung task never ends, so without both the
+  two context tests took 10 s each. The same 10 s are what a service with a hung task waits on
+  shutdown today.
+
 ## Tests
+
+`SchedulingPoolEnvironmentPostProcessorTest` boots small applications through
+`SpringApplicationBuilder` (so the post-processor comes from `spring.factories`) with a task that
+never completes and one that counts: with the default pool the counter moves; the control with
+`pool.size=1` keeps it at zero (the incident in small); a bounded hung pass frees even a single
+thread. Removing the registration from `spring.factories` fails the first one (checked).
+`ScheduledPassTest` covers the bound itself: the build per run, the cancel at the limit, the
+log lines, a timeout from inside, the argument checks.
 
 `LogbookTraceIdTest` is the proof of HAS-298 and the one test here that boots a whole
 application (`@SpringBootTest`, random port, `@EnableAutoConfiguration` minus Boot's R2DBC):
