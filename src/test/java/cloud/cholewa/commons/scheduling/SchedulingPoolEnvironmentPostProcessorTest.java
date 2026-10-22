@@ -80,6 +80,19 @@ class SchedulingPoolEnvironmentPostProcessorTest {
         assertThat(environment.getPropertySources().contains(PROPERTY_SOURCE)).isFalse();
     }
 
+    //found in the code review: a value that is no number is the application's to fix, and Boot's
+    //binding of the property says so - not a stack trace from this post-processor
+    @Test
+    void should_leave_a_value_that_is_no_number_to_boot() {
+        final StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("application", Map.of(POOL_SIZE, "ten")));
+
+        new SchedulingPoolEnvironmentPostProcessor().postProcessEnvironment(environment, new SpringApplication());
+
+        assertThat(environment.getProperty(POOL_SIZE)).isEqualTo("ten");
+        assertThat(environment.getPropertySources().contains(PROPERTY_SOURCE)).isFalse();
+    }
+
     //a task that never completes starts first; the other one runs on schedule all the same - the
     //application starts through SpringApplication, so the post-processor comes from spring.factories
     @Test

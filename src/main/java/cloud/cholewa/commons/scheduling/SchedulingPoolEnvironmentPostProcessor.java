@@ -3,6 +3,7 @@ package cloud.cholewa.commons.scheduling;
 import org.jspecify.annotations.NonNull;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.context.properties.bind.BindException;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -34,7 +35,13 @@ public class SchedulingPoolEnvironmentPostProcessor implements EnvironmentPostPr
     public void postProcessEnvironment(final @NonNull ConfigurableEnvironment environment, final SpringApplication application) {
         //the Binder, not getProperty: the relaxed names Boot binds the property with
         //(SPRING_TASK_SCHEDULING_POOL_SIZE of a pod included)
-        if (Binder.get(environment).bind(POOL_SIZE, Integer.class).isBound()) {
+        try {
+            if (Binder.get(environment).bind(POOL_SIZE, Integer.class).isBound()) {
+                return;
+            }
+        } catch (final BindException setButNotANumber) {
+            //the application set it, wrongly: Boot's own binding of the property reports that, with
+            //its failure analysis - not a stack trace from here (code review of HAS-300)
             return;
         }
         environment.getPropertySources()
