@@ -1,0 +1,1 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\n  cloud.cholewa.commons.logbook.LogbookServerModeEnvironmentPostProcessor

@@ -1,4 +1,5 @@
 cloud.cholewa.commons.database.R2dbcConnectionFactoryAutoConfiguration
+cloud.cholewa.commons.logbook.LogbookReactiveAutoConfiguration
 cloud.cholewa.commons.notification.NotificationPublisherAutoConfiguration
 cloud.cholewa.commons.rabbit.RabbitConnectionNameAutoConfiguration
 cloud.cholewa.commons.startup.RequiredPropertiesAutoConfiguration
