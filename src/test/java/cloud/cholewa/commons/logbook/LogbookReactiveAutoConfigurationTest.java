@@ -27,7 +27,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+
 import static cloud.cholewa.commons.logbook.LogbookReactiveAutoConfiguration.NETTY_CLIENT_CUSTOMIZER;
+import static cloud.cholewa.commons.logbook.LogbookServerModeEnvironmentPostProcessor.ACTUATOR_EXCLUDE;
 import static cloud.cholewa.commons.logbook.LogbookServerModeEnvironmentPostProcessor.PROPERTY_SOURCE;
 import static cloud.cholewa.commons.logbook.LogbookServerModeEnvironmentPostProcessor.SERVER_MODE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -169,7 +173,51 @@ class LogbookReactiveAutoConfigurationTest {
         new LogbookServerModeEnvironmentPostProcessor().postProcessEnvironment(environment, new SpringApplication());
 
         assertThat(environment.getProperty(SERVER_MODE)).isNull();
-        assertThat(environment.getPropertySources().get(PROPERTY_SOURCE)).isNull();
+        //the other default stays, in the one property source of the library
+        assertThat(environment.getProperty(ACTUATOR_EXCLUDE)).isEqualTo("/actuator/**");
+        assertThat(environment.getPropertySources().get(PROPERTY_SOURCE)).isNotNull();
+    }
+
+    //the probes and the scrape: nobody reads them, and a dashboard cannot hide their response lines
+    @Test
+    void should_exclude_the_actuator_from_the_server_side_of_logbook() {
+        final StandardEnvironment environment = new StandardEnvironment();
+
+        new LogbookServerModeEnvironmentPostProcessor().postProcessEnvironment(environment, new SpringApplication());
+
+        assertThat(environment.getProperty(ACTUATOR_EXCLUDE)).isEqualTo("/actuator/**");
+    }
+
+    //a list binds from the first source that has one: an application with its own exclusions keeps
+    //exactly them (and names the actuator itself)
+    @Test
+    void should_let_the_consumers_own_exclusions_win_whole() {
+        final StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("application",
+            Map.of("logbook.server.predicate.exclude[0].path", "/own/**")));
+
+        new LogbookServerModeEnvironmentPostProcessor().postProcessEnvironment(environment, new SpringApplication());
+
+        assertThat(Binder.get(environment).bind("logbook.server.predicate.exclude", Bindable.listOf(Exclusion.class)).get())
+            .extracting(Exclusion::path)
+            .containsExactly("/own/**");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"cholewa.logbook.exclude-actuator", "cholewa.logbook.excludeActuator"})
+    void should_keep_the_actuator_in_the_log_when_that_switch_is_off(final String key) {
+        final StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("application", Map.of(key, "false")));
+
+        new LogbookServerModeEnvironmentPostProcessor().postProcessEnvironment(environment, new SpringApplication());
+
+        assertThat(environment.getProperty(ACTUATOR_EXCLUDE)).isNull();
+        //the other default is still there: the two switches are independent
+        assertThat(environment.getProperty(SERVER_MODE)).isEqualTo("web-filter");
+    }
+
+    //how Logbook binds its predicate: a path per entry
+    record Exclusion(String path) {
     }
 
     @Test

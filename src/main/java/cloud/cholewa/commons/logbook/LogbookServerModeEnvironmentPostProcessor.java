@@ -9,6 +9,7 @@ import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.util.ClassUtils;
 
+import java.util.HashMap;
 import java.util.Map;
 
 //The server side of LogbookReactiveAutoConfiguration (HAS-298): Logbook chooses between its Netty
@@ -26,7 +27,16 @@ public class LogbookServerModeEnvironmentPostProcessor implements EnvironmentPos
     static final String PROPERTY_SOURCE = "cholewaLogbookDefaults";
     static final String SERVER_MODE = "logbook.reactive.server-mode";
     static final String WEB_FILTER = "web-filter";
+    //The probes of the kubelet and the scrape of Prometheus are the bulk of what a service receives,
+    //and nobody reads them: excluded on the server side by Logbook's own predicate (the request and
+    //its response alike - a dashboard can hide the request line, but a response line names no path).
+    //A list binds from the first property source that has one, so an application with a
+    //logbook.server.predicate.exclude of its own keeps exactly its list and has to name the actuator
+    //itself (owner, 2026-10-22)
+    static final String ACTUATOR_EXCLUDE = "logbook.server.predicate.exclude[0].path";
+    static final String ACTUATOR = "/actuator/**";
     private static final String SWITCH = LogbookReactiveAutoConfiguration.PREFIX + ".reactive-filters";
+    private static final String ACTUATOR_SWITCH = LogbookReactiveAutoConfiguration.PREFIX + ".exclude-actuator";
     private static final String LOGBOOK_WEBFLUX =
         "org.zalando.logbook.autoconfigure.webflux.LogbookWebFluxAutoConfiguration";
 
@@ -37,10 +47,18 @@ public class LogbookServerModeEnvironmentPostProcessor implements EnvironmentPos
         }
         //the Binder, not getProperty: the same relaxed names the condition of the auto-configuration
         //accepts, so reactiveFilters: false switches both halves off (review of HAS-298)
-        if (!Binder.get(environment).bind(SWITCH, Boolean.class).orElse(true)) {
+        final Binder binder = Binder.get(environment);
+        final Map<String, Object> defaults = new HashMap<>();
+        if (binder.bind(SWITCH, Boolean.class).orElse(true)) {
+            defaults.put(SERVER_MODE, WEB_FILTER);
+        }
+        if (binder.bind(ACTUATOR_SWITCH, Boolean.class).orElse(true)) {
+            defaults.put(ACTUATOR_EXCLUDE, ACTUATOR);
+        }
+        if (defaults.isEmpty()) {
             return;
         }
-        environment.getPropertySources().addLast(new MapPropertySource(PROPERTY_SOURCE, Map.of(SERVER_MODE, WEB_FILTER)));
+        environment.getPropertySources().addLast(new MapPropertySource(PROPERTY_SOURCE, defaults));
     }
 
     @Override
