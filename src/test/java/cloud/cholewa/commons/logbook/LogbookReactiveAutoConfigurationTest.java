@@ -58,8 +58,11 @@ class LogbookReactiveAutoConfigurationTest {
         final String factories = new ClassPathResource("META-INF/spring.factories")
             .getContentAsString(StandardCharsets.UTF_8);
 
+        //under the key of org.springframework.boot.EnvironmentPostProcessor: the one of
+        //org.springframework.boot.env is deprecated since Boot 4.0 and goes in 4.2
         assertThat(factories)
-            .contains("org.springframework.boot.env.EnvironmentPostProcessor=")
+            .contains("org.springframework.boot.EnvironmentPostProcessor=")
+            .doesNotContain("org.springframework.boot.env.EnvironmentPostProcessor")
             .contains(LogbookServerModeEnvironmentPostProcessor.class.getName());
     }
 

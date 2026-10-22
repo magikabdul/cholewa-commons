@@ -1,8 +1,8 @@
 package cloud.cholewa.commons.logbook;
 
+import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.context.properties.bind.Binder;
-import org.springframework.boot.env.EnvironmentPostProcessor;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.MapPropertySource;
@@ -15,7 +15,8 @@ import java.util.Map;
 //cannot be set by a bean, only by the environment. This post-processor adds the default web-filter as
 //the last property source: a consumer that sets the property itself, in a file or a variable, is not
 //overridden. Registered in META-INF/spring.factories, which is how Boot finds an
-//EnvironmentPostProcessor; it runs after the configuration files are read (lowest precedence), so
+//EnvironmentPostProcessor - the one of org.springframework.boot, the org.springframework.boot.env one
+//is deprecated since 4.0 and goes in 4.2; it runs after the configuration files are read (lowest precedence), so
 //the switch cholewa.logbook.reactive-filters of the application is already visible here.
 //Only an application with Logbook's WebFlux auto-configuration on the classpath is touched; the
 //class is checked by name, nothing is loaded
