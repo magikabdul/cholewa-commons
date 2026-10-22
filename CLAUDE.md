@@ -7,13 +7,13 @@ consumers, not just the org ones. Published to GitHub Packages
 (`maven.pkg.github.com/magikabdul/cholewa-commons`, pom server id `github-prv`).
 Java 21, Spring Boot 4.1.1 (`spring-boot-starter-parent`), Maven.
 
-Org consumers, with the version each is on today (2026-10-11, read from `origin/main` of
-each): `ai-service`, `amx-service`, `boiler-service`, `database-service`, `heating-service`,
-`notification-service`, `shelly-cloud-service` and `water-service` on **1.7.0**;
-`api-gateway-service` and `presence-service` on 1.5.1. Every org consumer is on the 1.x line.
-Four of them have RabbitMQ on the classpath - `amx-service`, `heating-service`,
-`notification-service`, `boiler-service` - and only those are reached by the `rabbit/` and
-`notification/` packages.
+Org consumers, with the version each is on today (2026-10-22, from `organization.md`):
+`amx-service`, `api-gateway-service`, `blinds-service`, `database-service`, `heating-service`,
+`light-service` and `weather-service` on **1.9.0**; `boiler-service` and `notification-service`
+on 1.8.0; `ai-service`, `shelly-cloud-service` and `water-service` on 1.7.0; `presence-service`
+on 1.5.1. Every org consumer is on the 1.x line. Every one of the thirteen has Logbook's
+WebFlux auto-configuration, so the `logbook/` package reaches them all on the bump to 1.10.0;
+the ones with RabbitMQ on the classpath are reached by `rabbit/` and `notification/` too.
 This list drifts: the authoritative answer is the `cholewa-commons.version` property in each
 consumer's pom.
 
@@ -49,18 +49,24 @@ Common building blocks for **reactive (WebFlux)** Spring Boot services:
   when a property the application lists under `cholewa.required-properties` has no value or an
   unresolvable placeholder (HAS-235; the `BrokerPasswordCheck` of heating-, boiler- and
   blinds-service, a fourth copy was due in weather-service).
+- `logbook/` — `LogbookReactiveAutoConfiguration` and `LogbookServerModeEnvironmentPostProcessor`:
+  Logbook logs from inside the reactive chain (its WebFilter and its `ExchangeFilterFunction`
+  instead of its Netty handlers), so its request and response lines carry the trace (HAS-298).
 - `info/` — `InfoController`: `GET /info` with app name, version and git commit
   (requires `application.title`/`application.version` properties and `GitProperties`
   in the consumer).
 
-There are five auto-configurations, all registered in
+There are six auto-configurations, all registered in
 `META-INF/spring/…AutoConfiguration.imports`: `R2dbcConnectionFactoryAutoConfiguration`
 (guarded by `@ConditionalOnClass` on the R2DBC types and `@ConditionalOnProperty` on
 `database.host`), `ValidationMessagesAutoConfiguration` (on by default, see below),
 `RabbitConnectionNameAutoConfiguration` (on by default where Spring AMQP is on the
 classpath), `NotificationPublisherAutoConfiguration` (opt-in,
-`cholewa.notification.enabled`) and `RequiredPropertiesAutoConfiguration` (inert without
-`cholewa.required-properties`).
+`cholewa.notification.enabled`), `RequiredPropertiesAutoConfiguration` (inert without
+`cholewa.required-properties`) and `LogbookReactiveAutoConfiguration` (on by default where
+Logbook's WebFlux pieces are on the classpath). The one `EnvironmentPostProcessor`,
+`LogbookServerModeEnvironmentPostProcessor`, is registered in `META-INF/spring.factories` -
+the only way Boot finds one.
 Everything else is opt-in:
 consumers register `GlobalErrorExceptionHandler` as a bean themselves (see README for the
 snippet).
@@ -410,7 +416,57 @@ as the copies had them.
   the services call their copies' method `brokerPasswordCheckProcessor`, so both coexist on the
   day a service bumps before deleting its copy.
 
+## Logbook in the reactive chain (HAS-298) — what to keep
+
+- **Why it exists:** Logbook's `LogbookServerHandler` (the default server mode, `netty`) and
+  `LogbookClientHandler` run in the Netty pipeline, outside every Reactor operator, and
+  `spring.reactor.context-propagation: auto` restores the MDC only at operator boundaries - so
+  every HTTP line of every service had no `traceId`, whatever the service set. Logbook's
+  `LogbookWebFilter` and `LogbookExchangeFilterFunction` do the same logging as operators of the
+  chain, where the span of the exchange is back in the MDC. Nothing in the `Sink` or the
+  `HttpLogWriter` changes; the logstash encoder adds the MDC as it does to every line.
+- **The server mode is a property read by a condition**, so a bean cannot set it: the
+  `EnvironmentPostProcessor` adds `logbook.reactive.server-mode=web-filter` as the **last**
+  property source (an application's own value wins), after the configuration files are read
+  (lowest precedence - the switch of the application is visible), and only when Logbook's
+  WebFlux auto-configuration is on the classpath (checked by name). It reads the switch with
+  the `Binder`, so `reactiveFilters: false` switches both halves off like `reactive-filters`.
+- **The bean name `logbookNettyClientCustomizer` is taken on purpose**: Logbook's
+  `WebFluxNettyClientConfiguration` is `@ConditionalOnMissingBean(name = ...)`, and with its
+  customizer and the filter both in place a connector built by Boot logs every exchange twice.
+  Ours returns the builder unchanged. It lives in a nested class conditional on the names of
+  the two types of `spring-boot-http-client`: a `@Bean` method whose signature names a missing
+  class fails the whole configuration class, a condition on a nested class loads nothing.
+- **Provided and conditional, like the broker:** `logbook-spring-boot-webflux-autoconfigure`,
+  `spring-boot-starter-webclient` and `spring-boot-http-client` are `provided`; the
+  auto-configuration is `@ConditionalOnClass` on `Logbook`, `LogbookExchangeFilterFunction`,
+  `WebClient` and `WebClientCustomizer` and `@ConditionalOnWebApplication(REACTIVE)`. Every
+  org service has all of it; a consumer without Logbook is not touched.
+- **On by default, with a switch** (`cholewa.logbook.reactive-filters`), like the validation
+  messages and the connection name: the point is that a service gets it by bumping. The price
+  the README names: a filter a service adds to the builder afterwards is not in the logged
+  request, the client filter buffers a response whole, and the services' own
+  `LogbookClientHandler` lines (seven places, listed in HAS-298) log twice until removed.
+- `api-gateway-service` proxies through Spring Cloud Gateway's own `HttpClient`, not a
+  `WebClient`: the server side gets the filter, the proxied calls are whatever the gateway logs
+  today - re-test it on the bump, as every gateway bump is.
+
 ## Tests
+
+`LogbookTraceIdTest` is the proof of HAS-298 and the one test here that boots a whole
+application (`@SpringBootTest`, random port, `@EnableAutoConfiguration` minus Boot's R2DBC):
+Micrometer Tracing with Brave and `context-propagation: auto` as in the services, a
+`RouterFunction` echo, a call to itself through the injected `WebClient.Builder`, a logback
+`ListAppender` on the `Logbook` logger. It asserts the four lines (client request, server
+request, server response, client response - told apart by `origin` and `type` of the JSON
+line), `traceId` and `spanId` in the MDC of each, one trace for all four, and **exactly four**
+(no double logging). The control was run once by hand with `cholewa.logbook.reactive-filters=false`:
+it fails on `traceId` of `null` for the first line - the Netty handlers, as the services log
+today. `LogbookReactiveAutoConfigurationTest` drives the auto-configuration with
+`ReactiveWebApplicationContextRunner` next to Logbook's real auto-configurations (the beans in
+both modes, the switch, a consumer without Logbook, a consumer without
+`spring-boot-http-client`) and the post-processor on a `StandardEnvironment` (the default, an
+own value winning, the switch in both spellings, a consumer without Logbook).
 
 `RabbitConnectionNameAutoConfigurationTest`, `NotificationPublisherAutoConfigurationTest` and
 `NotificationConnectionTest` use `ApplicationContextRunner` with the real

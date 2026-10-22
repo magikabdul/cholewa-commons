@@ -34,6 +34,8 @@
              line with jacoco's prepare-agent, so it must exist for the @{argLine} late replacement -->
 		<argLine/>
 
+		<logbook.version>4.2.0</logbook.version>
+
 		<!--  plugins versions-->
 		<maven-dependency-plugin.version>3.10.0</maven-dependency-plugin.version>
 		<maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
@@ -78,6 +80,26 @@
 			<artifactId>spring-boot-amqp</artifactId>
 			<scope>provided</scope>
 		</dependency>
+		<!-- Logbook in the reactive chain (HAS-298): provided, like the broker - the logbook/ package sits
+             behind @ConditionalOnClass and reaches only a consumer that has Logbook itself. The WebClient
+             module holds WebClientCustomizer, the http-client module the customizer of Boot's connector
+             builder that Logbook's own auto-configuration registers and this library replaces -->
+		<dependency>
+			<groupId>org.zalando</groupId>
+			<artifactId>logbook-spring-boot-webflux-autoconfigure</artifactId>
+			<version>${logbook.version}</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webclient</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-http-client</artifactId>
+			<scope>provided</scope>
+		</dependency>
 		<!-- generates META-INF/spring-configuration-metadata.json for DatabaseProperties, so a
              consumer gets completion and validation for the database.* group instead of
              hand-maintaining additional-spring-configuration-metadata.json -->
@@ -109,6 +131,18 @@
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>r2dbc-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- the tracing of the services, for the test that proves a Logbook line carries the trace:
+             the Boot module carries BraveAutoConfiguration, the bridge the Brave implementation -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-micrometer-tracing-brave</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-tracing-bridge-brave</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
