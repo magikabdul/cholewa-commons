@@ -431,6 +431,15 @@ as the copies had them.
   (lowest precedence - the switch of the application is visible), and only when Logbook's
   WebFlux auto-configuration is on the classpath (checked by name). It reads the switch with
   the `Binder`, so `reactiveFilters: false` switches both halves off like `reactive-filters`.
+- **The same post-processor excludes the actuator from the server side** (1.10.1, owner
+  2026-10-22): `logbook.server.predicate.exclude[0].path=/actuator/**`, switch
+  `cholewa.logbook.exclude-actuator`. Why here and not on a dashboard: a Logbook response line
+  names no path, only a correlation id LogQL cannot join on, so the probes' responses stayed in
+  the Grafana table however the requests were filtered. Logbook's `logbook.exclude` is the
+  deprecated form; `logbook.server.predicate.exclude` keeps the client side logging a call to
+  another service's actuator. **A list binds whole from the first property source that has one**:
+  an application with its own `logbook.server.predicate.exclude` keeps exactly its list, and the
+  default does not merge in - the test pins it, the README says so.
 - **The bean name `logbookNettyClientCustomizer` is taken on purpose**: Logbook's
   `WebFluxNettyClientConfiguration` is `@ConditionalOnMissingBean(name = ...)`, and with its
   customizer and the filter both in place a connector built by Boot logs every exchange twice.

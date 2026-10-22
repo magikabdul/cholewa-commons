@@ -19,6 +19,12 @@
       "defaultValue": true
     },
     {
+      "name": "cholewa.logbook.exclude-actuator",
+      "type": "java.lang.Boolean",
+      "description": "Whether the requests to /actuator/** - the liveness and readiness probes, the scrape of Prometheus - are left out of the Logbook log on the server side (logbook.server.predicate.exclude defaults to that one path; an application with a list of its own keeps exactly its list). Set to false to log them.",
+      "defaultValue": true
+    },
+    {
       "name": "cholewa.required-properties",
       "type": "java.util.List<cloud.cholewa.commons.startup.RequiredPropertiesAutoConfiguration$RequiredProperty>",
       "description": "Properties the application does not start without, each as {property, variable}: when one has no value, or holds a placeholder that does not resolve, the start is refused before the first bean is created. The variable is optional and only named in the refusal. Nothing is checked without the list."

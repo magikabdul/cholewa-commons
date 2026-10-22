@@ -29,6 +29,7 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
+import static org.springframework.web.reactive.function.server.RequestPredicates.GET;
 import static org.springframework.web.reactive.function.server.RequestPredicates.POST;
 import static org.springframework.web.reactive.function.server.RouterFunctions.route;
 import static org.springframework.web.reactive.function.server.ServerResponse.ok;
@@ -63,8 +64,29 @@ class LogbookTraceIdTest {
         @Bean
         RouterFunction<ServerResponse> echo() {
             return route(POST("/echo"), request -> request.bodyToMono(String.class)
-                .flatMap(body -> ok().bodyValue("echo: " + body)));
+                .flatMap(body -> ok().bodyValue("echo: " + body)))
+                //stands in for the real actuator, which this test does not start
+                .andRoute(GET("/actuator/health/readiness"), request -> ok().bodyValue("{\"status\":\"UP\"}"));
         }
+    }
+
+    //the probe is answered and not logged on the server side; the client side of the same call is
+    //(an application calling an actuator of another is rare, and it is not what the probes are)
+    @Test
+    void should_not_log_a_probe_on_the_server_side() {
+        final String answer = webClientBuilder.baseUrl("http://localhost:" + port).build()
+            .get().uri("/actuator/health/readiness")
+            .retrieve()
+            .bodyToMono(String.class)
+            .block(Duration.ofSeconds(10));
+
+        assertThat(answer).contains("UP");
+        //the two client lines, and nothing more for a while: a server line written late would
+        //otherwise slip past an assertion made as soon as the two had arrived
+        await().during(Duration.ofMillis(500)).atMost(Duration.ofSeconds(5))
+            .until(() -> lines.list.size() == 2);
+        assertThat(lines.list.stream().map(this::kind))
+            .containsExactlyInAnyOrder("local request", "remote response");
     }
 
     @Autowired

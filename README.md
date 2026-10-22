@@ -38,7 +38,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.10.0</version>
+    <version>1.10.1</version>
 </dependency>
 ```
 
@@ -545,6 +545,12 @@ does anywhere else in a reactive chain. What to know:
   Netty handler did.
 - `cholewa.logbook.reactive-filters: false` leaves Logbook exactly as its auto-configuration
   makes it - the Netty handlers, no trace in their lines.
+- **The probes are not logged** (since 1.10.1): `logbook.server.predicate.exclude` is defaulted to
+  the one path `/actuator/**`, so the liveness and readiness probes of the kubelet and the scrape
+  of Prometheus - the bulk of what a service receives, and nothing anybody reads - leave no
+  request and no response line. An application with a `logbook.server.predicate.exclude` of its
+  own keeps exactly its list (a list binds whole from the first source that has one) and names
+  the actuator itself; `cholewa.logbook.exclude-actuator: false` logs the probes again.
 
 ### Info endpoint
 
