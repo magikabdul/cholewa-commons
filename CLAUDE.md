@@ -491,6 +491,12 @@ as the copies had them.
   logged as one, not as the limit. The `Mono` always completes: an error would end the
   subscription of the run and Spring would log it at `ERROR` every time, and the point is that the
   next run happens.
+- **The pool makes the tasks of a consumer concurrent** (service-review of HAS-300): on one
+  thread they never overlapped. A consumer's tasks that share state without synchronisation, or
+  that together ask more of a small R2DBC pool (2 connections in most services) than it has, are
+  the consumer's to check on the bump - written in the README and in HAS-301…307.
+- **A pass ended at its limit is a success for Spring's observation** (`tasks.scheduled.execution`):
+  the `WARN` is the signal. Deliberate - see the previous point on why the `Mono` completes.
 - **What the timeout cancels is cancelled**: a database call or an HTTP call in flight. A command
   to a device that must not be cut off halfway stays outside the bounded part - the caller's
   decision, written in the Javadoc and the README (blinds-service keeps its commands outside).

@@ -590,6 +590,15 @@ its health stays `UP`. Two parts, and a service needs both:
 Without the bound a hung task holds its thread for good and never runs again, however large the
 pool; without the pool a bounded hung pass still stops the others until its limit.
 
+Two things change for an application on the bump:
+
+- **Its scheduled tasks may now run at the same time.** On one thread they never overlapped;
+  state two tasks share has to be safe for that, and their passes may ask the database pool for
+  connections at once - a small pool waits longer for one.
+- **A pass that reached its limit counts as completed** for Spring's observation of the task
+  (`tasks.scheduled.execution`): the `WARN` line is the signal, not the metric. An error would
+  have ended the run with an `ERROR` from Spring every time, which is what the bound avoids.
+
 ### Info endpoint
 
 `InfoController` (active in web applications only) exposes `GET /info` with the
