@@ -1,11 +1,14 @@
 package cloud.cholewa.commons.logbook;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.annotation.ImportCandidates;
 import org.springframework.boot.http.client.autoconfigure.reactive.ClientHttpConnectorBuilderCustomizer;
+import org.springframework.boot.http.client.reactive.ClientHttpConnectorBuilder;
 import org.springframework.boot.http.client.reactive.ReactorClientHttpConnectorBuilder;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
@@ -85,8 +88,7 @@ class LogbookReactiveAutoConfigurationTest {
         contextRunner.run(context -> {
             final ClientHttpConnectorBuilderCustomizer<ReactorClientHttpConnectorBuilder> customizer =
                 context.getBean(NETTY_CLIENT_CUSTOMIZER, ClientHttpConnectorBuilderCustomizer.class);
-            final ReactorClientHttpConnectorBuilder builder = ReactorClientHttpConnectorBuilder.class.cast(
-                org.springframework.boot.http.client.reactive.ClientHttpConnectorBuilder.reactor());
+            final ReactorClientHttpConnectorBuilder builder = ClientHttpConnectorBuilder.reactor();
 
             assertThat(customizer.customize(builder)).isSameAs(builder);
         });
@@ -154,11 +156,12 @@ class LogbookReactiveAutoConfigurationTest {
         assertThat(environment.getProperty(SERVER_MODE)).isEqualTo("netty");
     }
 
-    @Test
-    void should_not_touch_the_server_mode_when_switched_off() {
+    //in either spelling of the key: the relaxed names the condition of the auto-configuration accepts
+    @ParameterizedTest
+    @ValueSource(strings = {"cholewa.logbook.reactive-filters", "cholewa.logbook.reactiveFilters"})
+    void should_not_touch_the_server_mode_when_switched_off(final String key) {
         final StandardEnvironment environment = new StandardEnvironment();
-        environment.getPropertySources()
-            .addFirst(new MapPropertySource("application", Map.of("cholewa.logbook.reactive-filters", "false")));
+        environment.getPropertySources().addFirst(new MapPropertySource("application", Map.of(key, "false")));
 
         new LogbookServerModeEnvironmentPostProcessor().postProcessEnvironment(environment, new SpringApplication());
 

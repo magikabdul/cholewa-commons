@@ -1,6 +1,7 @@
 package cloud.cholewa.commons.logbook;
 
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.env.EnvironmentPostProcessor;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -32,7 +33,9 @@ public class LogbookServerModeEnvironmentPostProcessor implements EnvironmentPos
         if (!ClassUtils.isPresent(LOGBOOK_WEBFLUX, application.getClassLoader())) {
             return;
         }
-        if (!environment.getProperty(SWITCH, Boolean.class, true)) {
+        //the Binder, not getProperty: the same relaxed names the condition of the auto-configuration
+        //accepts, so reactiveFilters: false switches both halves off (review of HAS-298)
+        if (!Binder.get(environment).bind(SWITCH, Boolean.class).orElse(true)) {
             return;
         }
         environment.getPropertySources().addLast(new MapPropertySource(PROPERTY_SOURCE, Map.of(SERVER_MODE, WEB_FILTER)));
