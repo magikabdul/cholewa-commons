@@ -38,7 +38,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.9.0</version>
+    <version>1.10.0</version>
 </dependency>
 ```
 
@@ -512,6 +512,39 @@ A required property has no value: spring.rabbitmq.password (set rabbitmq-passwor
   anything is not touched by the upgrade.
 - A profile for a workstation or for tests gives the properties a default (`${rabbitmq-password:dummyPassword}`)
   and passes the check; the list stays in the shared document.
+
+### Logbook lines with the trace
+
+Since 1.10.0, in a WebFlux application that has Logbook (`logbook-spring-boot-webflux-autoconfigure`)
+and Micrometer Tracing, every request and response line of Logbook carries the `traceId` and
+`spanId` of the exchange, like every other line of the application. Nothing to configure: the
+library moves Logbook from the Netty pipeline, where no Reactor operator restores the MDC, into
+the reactive chain -
+
+- the server logs through Logbook's `LogbookWebFilter`: `logbook.reactive.server-mode` is
+  defaulted to `web-filter` (an `EnvironmentPostProcessor`; a value the application sets wins);
+- every `WebClient` built from the injected `WebClient.Builder` logs through Logbook's
+  `LogbookExchangeFilterFunction` (a `WebClientCustomizer`), and the customizer Logbook would put
+  on Boot's connector builder is replaced by one that adds nothing, so nothing is logged twice.
+
+It needs `spring.reactor.context-propagation: auto` in the application, as tracing in the MDC
+does anywhere else in a reactive chain. What to know:
+
+- **Drop your own `LogbookClientHandler`.** An application that added
+  `connection.addHandlerLast(new LogbookClientHandler(logbook))` to a reactor-netty `HttpClient`
+  logs every outgoing exchange twice until that line goes - once by the handler (without the
+  trace), once by the filter.
+- A `WebClient` built with `WebClient.create()` or a call made on a bare `HttpClient` is not
+  logged by the filter; a `WebClient` from the injected builder with a connector of its own is.
+- The filter is added when the builder is created, so it runs **before** any filter the
+  application adds to the builder afterwards: a header such a filter sets is not in the logged
+  request. Add your own filters first, or put a `LogbookExchangeFilterFunction` of your own last
+  and switch this one off.
+- The filter buffers a response body whole before handing it over (Logbook's own behaviour);
+  a streamed response arrives at once. The server filter buffers request bodies the same way the
+  Netty handler did.
+- `cholewa.logbook.reactive-filters: false` leaves Logbook exactly as its auto-configuration
+  makes it - the Netty handlers, no trace in their lines.
 
 ### Info endpoint
 
