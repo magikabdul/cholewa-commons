@@ -3,6 +3,9 @@ package cloud.cholewa.commons.notification;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -123,6 +126,21 @@ class NotificationPublisherTest {
             .containsEntry("category", "household")
             .containsEntry("level", "info")
             .containsEntry("env", "dev");
+    }
+
+    //a body that cannot be a notification is refused before anything is sent - as a signal, not a throw
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"   ", "\n"})
+    void should_refuse_a_household_notification_without_a_body(final String json) {
+        final Mono<Void> publish = sut.publishHousehold(json);
+
+        publish.as(StepVerifier::create)
+            .expectErrorSatisfies(error -> assertThat(error)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A household notification needs a JSON body"))
+            .verify();
+        verifyNoInteractions(rabbitOperations);
     }
 
     //the delivery feedback of the household notification is that of the others: a message no queue

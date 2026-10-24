@@ -97,9 +97,15 @@ public class NotificationPublisher {
      * For the people of the house (HAS-277): category {@code household}, level {@code info}, and a JSON
      * body - the {@code HouseholdNotification} of smart-home-sdk, which the consumer words itself. The
      * JSON is the caller's to write: this library knows no model of the household, and a text that is
-     * not the model is refused on the other side.
+     * not the model is refused on the other side. A {@code null} or blank body is refused here, as an
+     * error of the {@code Mono} - the broker would confirm it and the caller would count it as sent.
+     * Like every notification, the body is logged at {@code INFO} once published: put nothing in it
+     * that does not belong in a log line.
      */
     public Mono<Void> publishHousehold(final String json) {
+        if (json == null || json.isBlank()) {
+            return Mono.error(new IllegalArgumentException("A household notification needs a JSON body"));
+        }
         return publish(CATEGORY_HOUSEHOLD, LEVEL_INFO, json, MessageProperties.CONTENT_TYPE_JSON);
     }
 

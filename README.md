@@ -343,8 +343,10 @@ Every message also carries `env` (for example `prod` or `dev`) and encoding `UTF
 type is `text/plain`, and `application/json` for `publishHousehold`, whose body is the JSON the
 caller wrote (the `HouseholdNotification` of smart-home-sdk in the org - the consumer composes the
 words, so the body carries no text). The JSON goes out exactly as given, never through a converter
-of the template. A household queue missing on the broker is the same error as any unrouted
-message. These names and values are the wire contract with the consumer of the
+of the template. A `null` or blank body is refused before anything is sent (an
+`IllegalArgumentException` as the error of the `Mono`), and a household queue missing on the
+broker is the same error as any unrouted message. Like every notification, the body is logged at
+`INFO` once published. These names and values are the wire contract with the consumer of the
 queues; the exchange, the queues and the bindings are expected to exist — the publisher
 declares nothing.
 
