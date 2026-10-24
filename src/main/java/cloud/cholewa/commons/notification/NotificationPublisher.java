@@ -41,6 +41,7 @@ public class NotificationPublisher {
     static final String LEVEL_HEADER = "level";
     static final String CATEGORY_ALERT = "alert";
     static final String CATEGORY_INFO = "info";
+    static final String CATEGORY_HOUSEHOLD = "household";
     static final String LEVEL_ERROR = "error";
     static final String LEVEL_WARN = "warn";
     static final String LEVEL_INFO = "info";
@@ -92,15 +93,36 @@ public class NotificationPublisher {
         return publish(CATEGORY_INFO, LEVEL_INFO, text);
     }
 
+    /**
+     * For the people of the house (HAS-277): category {@code household}, level {@code info}, and a JSON
+     * body - the {@code HouseholdNotification} of smart-home-sdk, which the consumer words itself. The
+     * JSON is the caller's to write: this library knows no model of the household, and a text that is
+     * not the model is refused on the other side. A {@code null} or blank body is refused here, as an
+     * error of the {@code Mono} - the broker would confirm it and the caller would count it as sent.
+     * Like every notification, the body is logged at {@code INFO} once published: put nothing in it
+     * that does not belong in a log line.
+     */
+    public Mono<Void> publishHousehold(final String json) {
+        if (json == null || json.isBlank()) {
+            return Mono.error(new IllegalArgumentException("A household notification needs a JSON body"));
+        }
+        return publish(CATEGORY_HOUSEHOLD, LEVEL_INFO, json, MessageProperties.CONTENT_TYPE_JSON);
+    }
+
+    //alert and info are plain text, read by notification-service as they are
+    private Mono<Void> publish(final String category, final String level, final String text) {
+        return publish(category, level, text, MessageProperties.CONTENT_TYPE_TEXT_PLAIN);
+    }
+
     //a headers exchange: the routing key is ignored, the queue is chosen by category and env.
     //The level is not routed by - the consumer reads it to pick how the message looks.
-    //Plain text, because the consumer reads the message as a String - sent through a JSON converter
-    //it would arrive quoted and as application/json, so the message is built here and the converter
-    //of the template is never asked
-    private Mono<Void> publish(final String category, final String level, final String text) {
+    //The body as it is given, because the consumer reads the message as a String - sent through a
+    //JSON converter a text would arrive quoted, so the message is built here and the converter of the
+    //template is never asked; the content type says which of the two it is
+    private Mono<Void> publish(final String category, final String level, final String text, final String contentType) {
         return Mono.fromCallable(() -> {
                 final CorrelationData correlationData = new CorrelationData();
-                rabbitOperations.send(exchange, "", toMessage(category, level, text), correlationData);
+                rabbitOperations.send(exchange, "", toMessage(category, level, text, contentType), correlationData);
                 return correlationData;
             })
             //the send blocks on the broker connection
@@ -135,9 +157,9 @@ public class NotificationPublisher {
         return Mono.empty();
     }
 
-    private Message toMessage(final String category, final String level, final String text) {
+    private Message toMessage(final String category, final String level, final String text, final String contentType) {
         return MessageBuilder.withBody(text.getBytes(StandardCharsets.UTF_8))
-            .setContentType(MessageProperties.CONTENT_TYPE_TEXT_PLAIN)
+            .setContentType(contentType)
             .setContentEncoding(StandardCharsets.UTF_8.name())
             .setHeader(CATEGORY_HEADER, category)
             .setHeader(LEVEL_HEADER, level)

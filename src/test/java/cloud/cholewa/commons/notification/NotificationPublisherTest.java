@@ -3,6 +3,9 @@ package cloud.cholewa.commons.notification;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -100,6 +103,62 @@ class NotificationPublisherTest {
             .containsEntry("category", "info")
             .containsEntry("level", "info")
             .containsEntry("env", "dev");
+    }
+
+    //HAS-277: the household category of notification-service - a JSON body it reads into the
+    //HouseholdNotification of smart-home-sdk, sent as it was given, never through a converter
+    @Test
+    void should_publish_a_household_notification_as_json_with_the_household_category() {
+        brokerAnswers(correlationData -> correlationData.getFuture().complete(new CorrelationData.Confirm(true, null)));
+        final String json = "{\"event\":\"appliance finished\",\"subject\":\"Zmywarka\",\"deviceId\":64,"
+            + "\"occurredAt\":\"2026-10-24T19:40:00\",\"reminder\":0}";
+
+        sut.publishHousehold(json).as(StepVerifier::create).verifyComplete();
+
+        verify(rabbitOperations).send(eq("notification"), eq(""), messageCaptor.capture(), any(CorrelationData.class));
+
+        final Message message = messageCaptor.getValue();
+        assertThat(new String(message.getBody(), StandardCharsets.UTF_8)).isEqualTo(json);
+        assertThat(message.getMessageProperties().getContentType()).isEqualTo("application/json");
+        assertThat(message.getMessageProperties().getContentEncoding()).isEqualTo("UTF-8");
+        assertThat(message.getMessageProperties().getHeaders())
+            .containsOnlyKeys("category", "level", "env")
+            .containsEntry("category", "household")
+            .containsEntry("level", "info")
+            .containsEntry("env", "dev");
+    }
+
+    //a body that cannot be a notification is refused before anything is sent - as a signal, not a throw
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"   ", "\n"})
+    void should_refuse_a_household_notification_without_a_body(final String json) {
+        final Mono<Void> publish = sut.publishHousehold(json);
+
+        publish.as(StepVerifier::create)
+            .expectErrorSatisfies(error -> assertThat(error)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A household notification needs a JSON body"))
+            .verify();
+        verifyNoInteractions(rabbitOperations);
+    }
+
+    //the delivery feedback of the household notification is that of the others: a message no queue
+    //takes (a broker without the household queues) is an error, not a success
+    @Test
+    void should_signal_error_when_no_queue_takes_a_household_notification() {
+        brokerAnswers(correlationData -> {
+            correlationData.setReturned(new ReturnedMessage(
+                new Message(new byte[0]), 312, "NO_ROUTE", "notification", ""));
+            correlationData.getFuture().complete(new CorrelationData.Confirm(true, null));
+        });
+
+        sut.publishHousehold("{}")
+            .as(StepVerifier::create)
+            .expectErrorSatisfies(error -> assertThat(error)
+                .isInstanceOf(NotificationPublishException.class)
+                .hasMessage("Notification was not routed to any queue: NO_ROUTE"))
+            .verify();
     }
 
     @Test

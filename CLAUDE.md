@@ -5,13 +5,14 @@ account**, not the `smart-home-automation-system` org — it is also used by ser
 outside that project, so treat every public-API change as affecting unknown external
 consumers, not just the org ones. Published to GitHub Packages
 (`maven.pkg.github.com/magikabdul/cholewa-commons`, pom server id `github-prv`).
-Java 21, Spring Boot 4.1.1 (`spring-boot-starter-parent`), Maven.
+Java 21, Spring Boot 4.1.2 (`spring-boot-starter-parent`), Maven.
 
-Org consumers, with the version each is on today (2026-10-22, from `organization.md`):
-`amx-service`, `api-gateway-service`, `blinds-service`, `database-service`, `heating-service`,
-`light-service` and `weather-service` on **1.9.0**; `boiler-service` and `notification-service`
-on 1.8.0; `ai-service`, `shelly-cloud-service` and `water-service` on 1.7.0; `presence-service`
-on 1.5.1. Every org consumer is on the 1.x line. Every one of the thirteen has Logbook's
+Org consumers, with the version each is on today (2026-10-24, from `organization.md`):
+`amx-service`, `blinds-service`, `boiler-service`, `database-service`, `heating-service`,
+`light-service`, `notification-service`, `presence-service`, `water-service` and
+`weather-service` on **1.11.0**; `api-gateway-service` on 1.9.0; `ai-service` and
+`shelly-cloud-service` on 1.7.0. `appliance-service` (HAS-277) starts on 1.12.0. Every org
+consumer is on the 1.x line. Every one of the thirteen has Logbook's
 WebFlux auto-configuration, so the `logbook/` package reaches them all on the bump to 1.10.0;
 the ones with RabbitMQ on the classpath are reached by `rabbit/` and `notification/` too.
 This list drifts: the authoritative answer is the `cholewa-commons.version` property in each
@@ -340,6 +341,12 @@ as the copies had them.
   (`setReturnsCallback` throws on a second), and `boiler-service` already installs its own
   through a `RabbitTemplateCustomizer`. `NotificationConnection` owns its template and does
   install one.
+- **`publishHousehold(json)` (1.12.0, HAS-277)** - the third category of notification-service:
+  `household`, level `info`, content type `application/json`. The library knows no model of the
+  household: the caller writes the JSON (`HouseholdNotification` of smart-home-sdk, which this
+  library must not depend on) and it goes out as given - the same rule as the plain text, no
+  converter of the template. Additive: alert, reminder and info are unchanged, a consumer outside
+  the org sees one method more. The first caller is appliance-service.
 - **The publisher swallows nothing and retries nothing.** "A notification must neither fail
   nor stall what it reports on" is the caller's rule to keep, because the two callers differ:
   `boiler-service` swallows the error and cuts the publish off after 30 s, `heating-service`
