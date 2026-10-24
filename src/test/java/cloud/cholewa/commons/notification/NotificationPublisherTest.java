@@ -102,6 +102,47 @@ class NotificationPublisherTest {
             .containsEntry("env", "dev");
     }
 
+    //HAS-277: the household category of notification-service - a JSON body it reads into the
+    //HouseholdNotification of smart-home-sdk, sent as it was given, never through a converter
+    @Test
+    void should_publish_a_household_notification_as_json_with_the_household_category() {
+        brokerAnswers(correlationData -> correlationData.getFuture().complete(new CorrelationData.Confirm(true, null)));
+        final String json = "{\"event\":\"appliance finished\",\"subject\":\"Zmywarka\",\"deviceId\":64,"
+            + "\"occurredAt\":\"2026-10-24T19:40:00\",\"reminder\":0}";
+
+        sut.publishHousehold(json).as(StepVerifier::create).verifyComplete();
+
+        verify(rabbitOperations).send(eq("notification"), eq(""), messageCaptor.capture(), any(CorrelationData.class));
+
+        final Message message = messageCaptor.getValue();
+        assertThat(new String(message.getBody(), StandardCharsets.UTF_8)).isEqualTo(json);
+        assertThat(message.getMessageProperties().getContentType()).isEqualTo("application/json");
+        assertThat(message.getMessageProperties().getContentEncoding()).isEqualTo("UTF-8");
+        assertThat(message.getMessageProperties().getHeaders())
+            .containsOnlyKeys("category", "level", "env")
+            .containsEntry("category", "household")
+            .containsEntry("level", "info")
+            .containsEntry("env", "dev");
+    }
+
+    //the delivery feedback of the household notification is that of the others: a message no queue
+    //takes (a broker without the household queues) is an error, not a success
+    @Test
+    void should_signal_error_when_no_queue_takes_a_household_notification() {
+        brokerAnswers(correlationData -> {
+            correlationData.setReturned(new ReturnedMessage(
+                new Message(new byte[0]), 312, "NO_ROUTE", "notification", ""));
+            correlationData.getFuture().complete(new CorrelationData.Confirm(true, null));
+        });
+
+        sut.publishHousehold("{}")
+            .as(StepVerifier::create)
+            .expectErrorSatisfies(error -> assertThat(error)
+                .isInstanceOf(NotificationPublishException.class)
+                .hasMessage("Notification was not routed to any queue: NO_ROUTE"))
+            .verify();
+    }
+
     @Test
     void should_publish_to_the_exchange_and_env_it_was_given() {
         brokerAnswers(correlationData -> correlationData.getFuture().complete(new CorrelationData.Confirm(true, null)));

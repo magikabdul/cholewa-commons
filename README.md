@@ -39,7 +39,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.11.0</version>
+    <version>1.12.0</version>
 </dependency>
 ```
 
@@ -337,9 +337,14 @@ headers and the consumer reads the third:
 | `publishAlert(text)` | `alert` | `error` | something went wrong |
 | `publishReminder(text)` | `alert` | `warn` | it is still wrong — the same queue as the alert |
 | `publishInfo(text)` | `info` | `info` | it is fine again |
+| `publishHousehold(json)` (since 1.12.0) | `household` | `info` | for the people of the house - the body is JSON |
 
-Every message also carries `env` (for example `prod` or `dev`), content type `text/plain` and
-encoding `UTF-8`. These names and values are the wire contract with the consumer of the
+Every message also carries `env` (for example `prod` or `dev`) and encoding `UTF-8`; the content
+type is `text/plain`, and `application/json` for `publishHousehold`, whose body is the JSON the
+caller wrote (the `HouseholdNotification` of smart-home-sdk in the org - the consumer composes the
+words, so the body carries no text). The JSON goes out exactly as given, never through a converter
+of the template. A household queue missing on the broker is the same error as any unrouted
+message. These names and values are the wire contract with the consumer of the
 queues; the exchange, the queues and the bindings are expected to exist — the publisher
 declares nothing.
 
