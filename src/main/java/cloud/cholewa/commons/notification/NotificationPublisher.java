@@ -3,6 +3,7 @@ package cloud.cholewa.commons.notification;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
+import org.springframework.amqp.core.MessageBuilderSupport;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitOperations;
@@ -17,7 +18,9 @@ import java.util.concurrent.TimeoutException;
 /**
  * Publishes a notification for the household: a plain text on a headers exchange, which routes it by
  * the headers {@code category} and {@code env}; the third header, {@code level}, tells the consumer
- * how to show it. The names and values of the headers are the wire contract with that consumer.
+ * how to show it. A fourth header, {@code sms}, is set only by the {@code ...Sms} methods: the consumer
+ * also sends such a message as an SMS (HAS-335). The names and values of the headers are the wire
+ * contract with that consumer.
  * <p>
  * A publish completes only when the broker has taken the message into a queue - confirmed and not
  * handed back - so a caller may record the notification as sent once the {@code Mono} completes.
@@ -39,6 +42,8 @@ public class NotificationPublisher {
     static final String CATEGORY_HEADER = "category";
     static final String ENV_HEADER = "env";
     static final String LEVEL_HEADER = "level";
+    static final String SMS_HEADER = "sms";
+    static final String SMS_MARK = "true";
     static final String CATEGORY_ALERT = "alert";
     static final String CATEGORY_INFO = "info";
     static final String CATEGORY_HOUSEHOLD = "household";
@@ -80,17 +85,37 @@ public class NotificationPublisher {
 
     /** Something went wrong: category {@code alert}, level {@code error}. */
     public Mono<Void> publishAlert(final String text) {
-        return publish(CATEGORY_ALERT, LEVEL_ERROR, text);
+        return publish(CATEGORY_ALERT, LEVEL_ERROR, text, false);
     }
 
     /** It is still wrong: the same queue as the alert, level {@code warn}. */
     public Mono<Void> publishReminder(final String text) {
-        return publish(CATEGORY_ALERT, LEVEL_WARN, text);
+        return publish(CATEGORY_ALERT, LEVEL_WARN, text, false);
     }
 
     /** It is fine again: category {@code info}, level {@code info}. */
     public Mono<Void> publishInfo(final String text) {
-        return publish(CATEGORY_INFO, LEVEL_INFO, text);
+        return publish(CATEGORY_INFO, LEVEL_INFO, text, false);
+    }
+
+    /**
+     * {@link #publishAlert(String)} marked for an SMS (HAS-335): one header more, {@code sms} with
+     * {@code true}. The exchange does not route by it, so the message reaches the same queue; the
+     * consumer reads it like the level and sends the message as an SMS as well. For the few messages
+     * nobody may miss - an SMS costs and wakes somebody.
+     */
+    public Mono<Void> publishAlertSms(final String text) {
+        return publish(CATEGORY_ALERT, LEVEL_ERROR, text, true);
+    }
+
+    /** {@link #publishReminder(String)} marked for an SMS, as {@link #publishAlertSms(String)}. */
+    public Mono<Void> publishReminderSms(final String text) {
+        return publish(CATEGORY_ALERT, LEVEL_WARN, text, true);
+    }
+
+    /** {@link #publishInfo(String)} marked for an SMS, as {@link #publishAlertSms(String)}. */
+    public Mono<Void> publishInfoSms(final String text) {
+        return publish(CATEGORY_INFO, LEVEL_INFO, text, true);
     }
 
     /**
@@ -106,12 +131,12 @@ public class NotificationPublisher {
         if (json == null || json.isBlank()) {
             return Mono.error(new IllegalArgumentException("A household notification needs a JSON body"));
         }
-        return publish(CATEGORY_HOUSEHOLD, LEVEL_INFO, json, MessageProperties.CONTENT_TYPE_JSON);
+        return publish(CATEGORY_HOUSEHOLD, LEVEL_INFO, json, MessageProperties.CONTENT_TYPE_JSON, false);
     }
 
     //alert and info are plain text, read by notification-service as they are
-    private Mono<Void> publish(final String category, final String level, final String text) {
-        return publish(category, level, text, MessageProperties.CONTENT_TYPE_TEXT_PLAIN);
+    private Mono<Void> publish(final String category, final String level, final String text, final boolean sms) {
+        return publish(category, level, text, MessageProperties.CONTENT_TYPE_TEXT_PLAIN, sms);
     }
 
     //a headers exchange: the routing key is ignored, the queue is chosen by category and env.
@@ -119,10 +144,16 @@ public class NotificationPublisher {
     //The body as it is given, because the consumer reads the message as a String - sent through a
     //JSON converter a text would arrive quoted, so the message is built here and the converter of the
     //template is never asked; the content type says which of the two it is
-    private Mono<Void> publish(final String category, final String level, final String text, final String contentType) {
+    private Mono<Void> publish(
+        final String category,
+        final String level,
+        final String text,
+        final String contentType,
+        final boolean sms
+    ) {
         return Mono.fromCallable(() -> {
                 final CorrelationData correlationData = new CorrelationData();
-                rabbitOperations.send(exchange, "", toMessage(category, level, text, contentType), correlationData);
+                rabbitOperations.send(exchange, "", toMessage(category, level, text, contentType, sms), correlationData);
                 return correlationData;
             })
             //the send blocks on the broker connection
@@ -141,7 +172,8 @@ public class NotificationPublisher {
                 //send ran on it already
                 .publishOn(Schedulers.boundedElastic())
                 .flatMap(confirm -> verifyDelivery(correlationData, confirm)))
-            .doOnSuccess(unused -> log.info("Published {} notification ({}): {}", category, level, text));
+            .doOnSuccess(unused -> log.info(
+                "Published {} notification ({}{}): {}", category, level, sms ? ", sms" : "", text));
     }
 
     private Mono<Void> verifyDelivery(final CorrelationData correlationData, final CorrelationData.Confirm confirm) {
@@ -157,13 +189,23 @@ public class NotificationPublisher {
         return Mono.empty();
     }
 
-    private Message toMessage(final String category, final String level, final String text, final String contentType) {
-        return MessageBuilder.withBody(text.getBytes(StandardCharsets.UTF_8))
+    //the sms header only on a marked message: an unmarked one carries the three headers it always had
+    private Message toMessage(
+        final String category,
+        final String level,
+        final String text,
+        final String contentType,
+        final boolean sms
+    ) {
+        final MessageBuilderSupport<Message> builder = MessageBuilder.withBody(text.getBytes(StandardCharsets.UTF_8))
             .setContentType(contentType)
             .setContentEncoding(StandardCharsets.UTF_8.name())
             .setHeader(CATEGORY_HEADER, category)
             .setHeader(LEVEL_HEADER, level)
-            .setHeader(ENV_HEADER, env)
-            .build();
+            .setHeader(ENV_HEADER, env);
+        if (sms) {
+            builder.setHeader(SMS_HEADER, SMS_MARK);
+        }
+        return builder.build();
     }
 }
