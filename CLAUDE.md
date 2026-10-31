@@ -347,6 +347,12 @@ as the copies had them.
   library must not depend on) and it goes out as given - the same rule as the plain text, no
   converter of the template. Additive: alert, reminder and info are unchanged, a consumer outside
   the org sees one method more. The first caller is appliance-service.
+- **`publishAlertSms` / `publishReminderSms` / `publishInfoSms` (1.13.0, HAS-335)** - the three
+  plain-text methods with a fourth header, `sms` = `"true"`: not routed by (the broker definitions
+  are unchanged), read by notification-service like `level`, which then texts the administrators of
+  the household after the Discord post. **An unmarked message carries no `sms` header**, not one set
+  to `false` - `containsOnlyKeys` in the tests pins both. Additive: the existing methods and their
+  headers are unchanged. The first publisher is energy-service (grid loss and return, HAS-334).
 - **The publisher swallows nothing and retries nothing.** "A notification must neither fail
   nor stall what it reports on" is the caller's rule to keep, because the two callers differ:
   `boiler-service` swallows the error and cuts the publish off after 30 s, `heating-service`

@@ -39,7 +39,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.12.0</version>
+    <version>1.13.0</version>
 </dependency>
 ```
 
@@ -338,6 +338,16 @@ headers and the consumer reads the third:
 | `publishReminder(text)` | `alert` | `warn` | it is still wrong — the same queue as the alert |
 | `publishInfo(text)` | `info` | `info` | it is fine again |
 | `publishHousehold(json)` (since 1.12.0) | `household` | `info` | for the people of the house - the body is JSON |
+| `publishAlertSms(text)` (since 1.13.0) | `alert` | `error` | an alert the consumer also sends as an SMS |
+| `publishReminderSms(text)` (since 1.13.0) | `alert` | `warn` | a reminder the consumer also sends as an SMS |
+| `publishInfoSms(text)` (since 1.13.0) | `info` | `info` | an info the consumer also sends as an SMS |
+
+The three `...Sms` methods add a fourth header, **`sms` with the text `true`**: the exchange does
+not route by it (the bindings stay on `category` and `env`, so the message reaches the same queue as
+its unmarked twin), and the consumer reads it like `level`. An unmarked message carries no `sms`
+header at all. In the org the consumer, notification-service, posts the message to Discord first and
+then texts the administrators of the household - keep the marked messages few, an SMS costs and wakes
+somebody.
 
 Every message also carries `env` (for example `prod` or `dev`) and encoding `UTF-8`; the content
 type is `text/plain`, and `application/json` for `publishHousehold`, whose body is the JSON the

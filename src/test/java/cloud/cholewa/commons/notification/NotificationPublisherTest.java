@@ -4,6 +4,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -36,6 +37,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -103,6 +105,65 @@ class NotificationPublisherTest {
             .containsEntry("category", "info")
             .containsEntry("level", "info")
             .containsEntry("env", "dev");
+    }
+
+    //HAS-335: a marked message carries a fourth header, sms=true, read by notification-service like the
+    //level - the queue is chosen by category and env alone, so the category and the level stay those of
+    //the unmarked method
+    @ParameterizedTest
+    @CsvSource({
+        "alert, alert, error",
+        "reminder, alert, warn",
+        "info, info, info"
+    })
+    void should_mark_a_message_for_an_sms_with_a_fourth_header(
+        final String method,
+        final String category,
+        final String level
+    ) {
+        brokerAnswers(correlationData -> correlationData.getFuture().complete(new CorrelationData.Confirm(true, null)));
+        final Mono<Void> publish = switch (method) {
+            case "alert" -> sut.publishAlertSms("The grid is lost");
+            case "reminder" -> sut.publishReminderSms("The grid is still lost");
+            default -> sut.publishInfoSms("The grid is back");
+        };
+
+        publish.as(StepVerifier::create).verifyComplete();
+
+        verify(rabbitOperations).send(eq("notification"), eq(""), messageCaptor.capture(), any(CorrelationData.class));
+
+        final Message message = messageCaptor.getValue();
+        assertThat(message.getMessageProperties().getContentType()).isEqualTo("text/plain");
+        assertThat(message.getMessageProperties().getHeaders())
+            .containsOnlyKeys("category", "level", "env", "sms")
+            .containsEntry("category", category)
+            .containsEntry("level", level)
+            .containsEntry("env", "dev")
+            .containsEntry("sms", "true");
+    }
+
+    //the unmarked methods stay as they were: no sms header at all, not one set to false
+    @Test
+    void should_not_mark_a_reminder_or_an_info_for_an_sms() {
+        brokerAnswers(correlationData -> correlationData.getFuture().complete(new CorrelationData.Confirm(true, null)));
+
+        sut.publishReminder("Sensor is still not reporting").as(StepVerifier::create).verifyComplete();
+        sut.publishInfo("Sensor is back").as(StepVerifier::create).verifyComplete();
+
+        verify(rabbitOperations, times(2))
+            .send(eq("notification"), eq(""), messageCaptor.capture(), any(CorrelationData.class));
+        assertThat(messageCaptor.getAllValues())
+            .allSatisfy(message -> assertThat(message.getMessageProperties().getHeaders())
+                .containsOnlyKeys("category", "level", "env"));
+    }
+
+    @Test
+    void should_log_that_a_published_notification_was_marked_for_an_sms(final CapturedOutput output) {
+        brokerAnswers(correlationData -> correlationData.getFuture().complete(new CorrelationData.Confirm(true, null)));
+
+        sut.publishInfoSms("The grid is back").as(StepVerifier::create).verifyComplete();
+
+        assertThat(output.getAll()).contains("Published info notification (info, sms): The grid is back");
     }
 
     //HAS-277: the household category of notification-service - a JSON body it reads into the
