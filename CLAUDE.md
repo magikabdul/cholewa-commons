@@ -171,11 +171,19 @@ snippet).
   and the old code called `add` on it. It is the generalised `DeviceDatabaseClient.mapErrorToException` of
   `amx-service`, which decoded the body by hand since HAS-150. The point of `hasCode`: a
   routing 404 and "no such record" are both a 404, and only a code tells them apart.
+- **`DomainExceptionProcessor` (1.14.0, HAS-213)** - moved from database-service (HAS-175) unchanged, the
+  second copy was heating-service's `RoomNotFoundExceptionProcessor` (HAS-197). One processor for every
+  domain exception, the status and the `ErrorId` its parameters: `message` = the description, `code` =
+  `ErrorId.codeOf`, `details` = the exception message for a 4xx only - a 5xx is whatever failed inside.
+  WARN for a 4xx, ERROR with the stack trace for a 5xx; the test pins the levels on logback events.
+  Its constructor refuses a null and a status below 400 (review of HAS-213): at the start, not at the first
+  request. Additive; no built-in registration uses it - a consumer registers it with `withCustomErrorProcessor`.
+  The adoptions are HAS-214 (database-service, which deletes its copy) and HAS-215 (heating-service).
 - `logError` in the handler is intentionally suppressed; logging happens in the
   processors instead (HAS-132): every processor logs the handled exception
   (`Handled [<class>]: <message>`) — `warn` for 4xx responses, `error` for 5xx
   (processors with a dynamic status pick the level at runtime) — and only
-  `DefaultExceptionProcessor` logs the stack trace.
+  `DefaultExceptionProcessor` logs the stack trace (and `DomainExceptionProcessor` for a 5xx).
 
 ## R2DBC connection factory — what the guards are for
 

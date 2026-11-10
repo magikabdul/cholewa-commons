@@ -39,7 +39,7 @@ The artifact is published to GitHub Packages:
 <dependency>
     <groupId>cloud.cholewa</groupId>
     <artifactId>cholewa-commons</artifactId>
-    <version>1.13.0</version>
+    <version>1.14.0</version>
 </dependency>
 ```
 
@@ -111,6 +111,20 @@ Two side effects of the new field for code that never sets it: `toString()` of a
 `ErrorMessage` now ends with `code=null`, and two messages that differ only in their code are
 not equal, so a `Set` keeps both.
 
+Since 1.14.0 (HAS-213) the library has the processor of a domain exception with a code:
+`DomainExceptionProcessor(status, cause)` answers `status` with one message - the description of
+the `ErrorId` as `message`, its name as `code` - and, for a 4xx, the exception message as
+`details`. A 5xx keeps the exception message out of the response. It logs the uniform
+`Handled [<exception class>]: …` line at `WARN` for a 4xx and at `ERROR` with the stack trace for a
+5xx. A status that is not an error (below 400) is refused when the processor is built. Register one
+instance per exception:
+
+```java
+.withCustomErrorProcessor(Map.ofEntries(
+    Map.entry(SensorNotFoundException.class, new DomainExceptionProcessor(HttpStatus.NOT_FOUND, NOT_FOUND_SENSOR))
+));
+```
+
 Processor selection is hierarchy-aware: an exception matches the processor registered
 for its exact class or, failing that, for its most specific registered supertype (e.g.
 `MissingRequestValueException` is handled by the `ServerWebInputException` processor).
@@ -129,7 +143,7 @@ is logged instead. These processors are why the library depends on `spring-tx`.
 Every built-in processor logs the exception it handles with a uniform
 `Handled [<exception class>]: …` line — at `WARN` level for 4xx responses and `ERROR`
 for 5xx (processors with a dynamic status pick the level from the resolved status).
-Only the default processor logs the stack trace. Custom processors registered via
+Only the default processor logs the stack trace (and `DomainExceptionProcessor` for a 5xx). Custom processors registered via
 `withCustomErrorProcessor` are responsible for their own logging.
 
 ### Reading an error of another service
