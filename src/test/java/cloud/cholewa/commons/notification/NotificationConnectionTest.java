@@ -8,9 +8,10 @@ import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionNameStrategy;
 import org.springframework.amqp.rabbit.core.RabbitOperations;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.boot.rabbitmq.autoconfigure.RabbitAutoConfiguration;
-import org.springframework.boot.rabbitmq.autoconfigure.RabbitProperties;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.rabbitmq.autoconfigure.RabbitAutoConfiguration;
+import org.springframework.boot.rabbitmq.autoconfigure.RabbitConnectionDetails;
+import org.springframework.boot.rabbitmq.autoconfigure.RabbitProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -271,13 +272,17 @@ class NotificationConnectionTest {
         @Bean
         NotificationConnection notificationConnection(
             final RabbitProperties rabbitProperties,
+            final RabbitConnectionDetails connectionDetails,
             final ConnectionNameStrategy connectionNameStrategy,
             final ApplicationContext applicationContext
         ) {
+            //the host and port as Boot resolved them (spring.rabbitmq.addresses or host / port): determineHost and
+            //determinePort of RabbitProperties are deprecated for removal since Boot 4.2.0
+            final RabbitConnectionDetails.Address broker = connectionDetails.getFirstAddress();
             return NotificationConnection.create(
                 new NotificationConnection.Settings(
-                    rabbitProperties.determineHost(),
-                    rabbitProperties.determinePort(),
+                    broker.host(),
+                    broker.port(),
                     "/notification",
                     "notification",
                     "secret",

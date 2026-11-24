@@ -310,7 +310,10 @@ as the copies had them.
   `org.springframework.boot.amqp.autoconfigure` to `org.springframework.boot.rabbitmq.autoconfigure`.
   The publisher is conditional on the new `RabbitAutoConfiguration`, so **a consumer on Boot 4.1 gets
   no `NotificationPublisher` from 2.0.0** - it moves to Boot 4.2.0 and `spring-boot-starter-rabbitmq`
-  (in place of `spring-boot-starter-amqp`) with the bump, in one change.
+  (in place of `spring-boot-starter-amqp`) with the bump, in one change. `RabbitProperties.determineHost` /
+  `determinePort` are deprecated for removal (4.4.0, no replacement in the class): the host and port for
+  `NotificationConnection.Settings` come from the `RabbitConnectionDetails` bean (`getFirstAddress()`), as
+  `NotificationConnectionTest` shows - the copies of `NotificationRabbitConfig` in the services move with the bump.
 - **Never add a `ConnectionFactory` or a `RabbitOperations` bean here.**
   `RabbitAutoConfiguration` backs off from either, and the consumer loses its auto-configured
   connection with everything `spring.rabbitmq.*` sets on it (manual ack, prefetch,
