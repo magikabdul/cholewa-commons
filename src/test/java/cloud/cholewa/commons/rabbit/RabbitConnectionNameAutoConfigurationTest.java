@@ -8,10 +8,10 @@ import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionNameStrategy;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.annotation.ImportCandidates;
+import org.springframework.boot.rabbitmq.autoconfigure.RabbitAutoConfiguration;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -104,7 +104,7 @@ class RabbitConnectionNameAutoConfigurationTest {
             .withPropertyValues(switchedOn.isEmpty()
                 ? new String[0]
                 : new String[] {"cholewa.rabbit.pod-connection-name=" + switchedOn})
-            .withClassLoader(new FilteredClassLoader("org.springframework.amqp", "org.springframework.boot.amqp"))
+            .withClassLoader(new FilteredClassLoader("org.springframework.amqp", "org.springframework.boot.rabbitmq"))
             .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(BEAN_NAME));
     }
 

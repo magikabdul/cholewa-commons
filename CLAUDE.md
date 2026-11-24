@@ -5,7 +5,7 @@ account**, not the `smart-home-automation-system` org — it is also used by ser
 outside that project, so treat every public-API change as affecting unknown external
 consumers, not just the org ones. Published to GitHub Packages
 (`maven.pkg.github.com/magikabdul/cholewa-commons`, pom server id `github-prv`).
-Java 21, Spring Boot 4.1.2 (`spring-boot-starter-parent`), Maven.
+Java 21, Spring Boot 4.2.0 (`spring-boot-starter-parent`), Maven.
 
 Org consumers, with the version each is on today (2026-10-24, from `organization.md`):
 `amx-service`, `blinds-service`, `boiler-service`, `database-service`, `heating-service`,
@@ -300,11 +300,20 @@ names, the levels, the content type and the three error texts are **wire contrac
 `notification-service` and with what the services log — `NotificationPublisherTest` pins them
 as the copies had them.
 
-- **`spring-boot-amqp` is `provided`**, like the r2dbc dependencies and for the same reason:
+- **`spring-boot-rabbitmq` is `provided`**, like the r2dbc dependencies and for the same reason:
   six of the ten org consumers have no broker. Every class that touches Spring AMQP is either
   an auto-configuration behind `@ConditionalOnClass` or one a consumer has to reach for
   itself. Do not make it a compile dependency: `RabbitAutoConfiguration` would start trying
   to configure a connection in `database-service`.
+- **Boot 4.2.0 moved the classic RabbitMQ support** (HAS-494) from `spring-boot-amqp` (now the
+  AMQP 1.0 client) to `spring-boot-rabbitmq`, and its classes from
+  `org.springframework.boot.amqp.autoconfigure` to `org.springframework.boot.rabbitmq.autoconfigure`.
+  The publisher is conditional on the new `RabbitAutoConfiguration`, so **a consumer on Boot 4.1 gets
+  no `NotificationPublisher` from 2.0.0** - it moves to Boot 4.2.0 and `spring-boot-starter-rabbitmq`
+  (in place of `spring-boot-starter-amqp`) with the bump, in one change. `RabbitProperties.determineHost` /
+  `determinePort` are deprecated for removal (4.4.0, no replacement in the class): the host and port for
+  `NotificationConnection.Settings` come from the `RabbitConnectionDetails` bean (`getFirstAddress()`), as
+  `NotificationConnectionTest` shows - the copies of `NotificationRabbitConfig` in the services move with the bump.
 - **Never add a `ConnectionFactory` or a `RabbitOperations` bean here.**
   `RabbitAutoConfiguration` backs off from either, and the consumer loses its auto-configured
   connection with everything `spring.rabbitmq.*` sets on it (manual ack, prefetch,
@@ -561,7 +570,7 @@ and the thread a caller continues on.
 
 **A consumer without RabbitMQ — three levels of proof, in rising order.** The "not on the
 classpath" tests of the two auto-configurations use a `FilteredClassLoader` over the packages
-`org.springframework.amqp` and `org.springframework.boot.amqp`, with the switches unset and
+`org.springframework.amqp` and `org.springframework.boot.rabbitmq`, with the switches unset and
 set. That hides the classes **from the conditions only**: the classes of this library are
 still loaded by the class loader of the test, which has the jars, so a reference to an AMQP
 type resolved too early would pass. `NoBrokerOnTheClasspathTest` closes most of that gap: it

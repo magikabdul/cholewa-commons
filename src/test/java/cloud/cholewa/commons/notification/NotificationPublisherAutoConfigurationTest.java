@@ -7,10 +7,10 @@ import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitOperations;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.annotation.ImportCandidates;
+import org.springframework.boot.rabbitmq.autoconfigure.RabbitAutoConfiguration;
 import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -116,7 +116,7 @@ class NotificationPublisherAutoConfigurationTest {
             .withPropertyValues(enabled.isEmpty()
                 ? new String[0]
                 : new String[] {"cholewa.notification.enabled=" + enabled, "cholewa.notification.env=dev"})
-            .withClassLoader(new FilteredClassLoader("org.springframework.amqp", "org.springframework.boot.amqp"))
+            .withClassLoader(new FilteredClassLoader("org.springframework.amqp", "org.springframework.boot.rabbitmq"))
             .run(context -> assertThat(context).hasNotFailed().doesNotHaveBean(BEAN_NAME));
     }
 
