@@ -7,7 +7,7 @@
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=magikabdul_cholewa-commons&metric=coverage)](https://sonarcloud.io/summary/new_code?id=magikabdul_cholewa-commons)
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=magikabdul_cholewa-commons&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=magikabdul_cholewa-commons)
 ![Java](https://img.shields.io/badge/java-21-yellow?style=plastic)
-![SpringBoot](https://img.shields.io/badge/SpringBoot-4.1.2-blue?style=plastic)
+![SpringBoot](https://img.shields.io/badge/SpringBoot-4.2.0-blue?style=plastic)
 
 ![GitHub issues](https://img.shields.io/github/issues/magikabdul/cholewa-commons?style=plastic)
 ![GitHub contributors](https://img.shields.io/github/contributors/magikabdul/cholewa-commons?style=plastic)
@@ -42,6 +42,12 @@ The artifact is published to GitHub Packages:
     <version>1.14.0</version>
 </dependency>
 ```
+
+**2.0.0 needs Spring Boot 4.2.0.** Boot 4.2.0 moved the classic RabbitMQ support to
+`spring-boot-rabbitmq` (`spring-boot-amqp` is the AMQP 1.0 client since then): a consumer with a
+broker takes 2.0.0 together with Boot 4.2.0, `spring-boot-starter-rabbitmq` in place of
+`spring-boot-starter-amqp` and the imports of `org.springframework.boot.rabbitmq.autoconfigure` -
+on Boot 4.1 it gets no `NotificationPublisher`. A consumer without a broker is not affected.
 
 ```xml
 <repositories>

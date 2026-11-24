@@ -16,20 +16,20 @@ import java.io.InputStream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-//Most consumers of this library have no RabbitMQ: spring-boot-amqp is a provided dependency and does
+//Most consumers of this library have no RabbitMQ: spring-boot-rabbitmq is a provided dependency and does
 //not reach them. For them the two auto-configurations must cost nothing - above all no
 //NoClassDefFoundError at their start.
 //A FilteredClassLoader cannot show that: it hides classes from the conditions, but the classes of this
 //library are loaded by the class loader of the test all the same, and that one has the jars - a
 //reference to a type of Spring AMQP that is resolved too early would go unnoticed. So the context
 //here loads the classes of this library through a class loader that defines them itself and has no
-//Spring AMQP and no spring-boot-amqp at all, the way the class loader of such a consumer does.
+//Spring AMQP and no spring-boot-rabbitmq at all, the way the class loader of such a consumer does.
 //The proof that still outranks this one is the build of a consumer without the jars against the
 //library - see CLAUDE.md
 class NoBrokerOnTheClasspathTest {
 
     private static final String LIBRARY = "cloud.cholewa.commons.";
-    private static final String[] BROKER_PACKAGES = {"org.springframework.amqp.", "org.springframework.boot.amqp."};
+    private static final String[] BROKER_PACKAGES = {"org.springframework.amqp.", "org.springframework.boot.rabbitmq."};
 
     @ParameterizedTest(name = "with the properties [{0}]")
     @ValueSource(strings = {
